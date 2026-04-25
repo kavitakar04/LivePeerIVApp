@@ -815,12 +815,16 @@ def prepare_term_data(
     )
 
     synth_curve = None
+    synth_bands = None
+    peer_curves: Dict[str, pd.DataFrame] = {}
+    weight_series = pd.Series(dtype=float)
 
     if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
         if w.sum() <= 0:
             w = pd.Series({p: 1.0 for p in peers}, dtype=float)
         w = (w / w.sum()).astype(float)
+        weight_series = w.copy()
         peers = [p for p in w.index if p in peers]
 
         curves: Dict[str, pd.DataFrame] = {}
@@ -836,6 +840,7 @@ def prepare_term_data(
             )
             if not c.empty:
                 curves[p] = c
+        peer_curves = curves
 
         if curves:
             # Determine common expiries across target and peers
@@ -869,7 +874,7 @@ def prepare_term_data(
 
                 if atm_data:
                     pillar_days = common_T * 365.25
-                    level = float(ci) / 100.0 if ci and ci > 0 else 0.68
+                    level = float(ci) if ci and float(ci) <= 1.0 else float(ci) / 100.0 if ci and ci > 0 else 0.68
                     n_boot = max(min_boot, 1)
                     synth_bands = synthetic_etf_pillar_bands(
                         atm_data,
@@ -887,7 +892,13 @@ def prepare_term_data(
                         }
                     )
 
-    return {"atm_curve": atm_curve, "synth_curve": synth_curve, "synth_bands": synth_bands}
+    return {
+        "atm_curve": atm_curve,
+        "synth_curve": synth_curve,
+        "synth_bands": synth_bands,
+        "peer_curves": peer_curves,
+        "weights": weight_series,
+    }
 
 
 def fit_smile_for(

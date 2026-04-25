@@ -20,7 +20,7 @@ from display.plotting.correlation_detail_plot import (
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import (
     plot_atm_term_structure,
-    plot_synthetic_etf_term_structure,
+    plot_term_structure_comparison,
 )
 from display.plotting.weights_plot import plot_weights
 
@@ -30,6 +30,7 @@ from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 # Data/analysis utilities
 from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
 from analysis.compute_or_load import compute_or_load
+from display.gui.gui_input import plot_id
 
 
 from analysis.cache_io import  WarmupWorker
@@ -160,6 +161,21 @@ class PlotManager:
         except Exception:
             pass
 
+    def _clear_child_axes(self, ax: plt.Axes):
+        """Remove inset/helper axes attached to the main plotting axes."""
+        try:
+            if hasattr(ax.figure, "_surface_aux_axes"):
+                for aux in list(getattr(ax.figure, "_surface_aux_axes")):
+                    try:
+                        aux.remove()
+                    except Exception:
+                        pass
+                delattr(ax.figure, "_surface_aux_axes")
+            for child in list(getattr(ax, "child_axes", [])):
+                child.remove()
+        except Exception:
+            pass
+
     def invalidate_surface_cache(self):
         """Clear any cached surface grids."""
         self._surface_cache.clear()
@@ -240,6 +256,7 @@ class PlotManager:
 
         self.get_smile_slice = bounded_get_smile_slice
 
+        self._clear_child_axes(ax)
         ax.clear()
 
         # --- Smile: click-through (preload all expiries for date) ---
@@ -403,6 +420,8 @@ class PlotManager:
                 asof,
                 x_units,
                 ci,
+                overlay_peers=overlay_peers,
+                overlay_synth=overlay_synth,
             )
             return
 
@@ -427,7 +446,13 @@ class PlotManager:
             if weights is None or weights.empty:
                 ax.text(0.5, 0.5, "No weights", ha="center", va="center")
                 return
-            plot_weights(ax, weights)
+            raw_scores = None
+            try:
+                if isinstance(self.last_corr_df, pd.DataFrame) and target in self.last_corr_df.columns:
+                    raw_scores = self.last_corr_df.reindex(index=peers)[target]
+            except Exception:
+                raw_scores = None
+            plot_weights(ax, weights, raw_scores=raw_scores)
             return
 
         else:
@@ -441,9 +466,10 @@ class PlotManager:
         self.stop_animation()
         
         try:
-            if plot_type == "smile":
+            pid = plot_id(plot_type)
+            if pid == "smile":
                 return self._create_animated_smile(ax, settings)
-            elif plot_type == "surface":
+            elif pid == "synthetic_surface":
                 return self._create_animated_surface(ax, settings)
             else:
                 return False  # Animation not supported for this plot type
@@ -747,106 +773,81 @@ class PlotManager:
             tickers = list({target, *peers})
             surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
 
-            if target not in surfaces or asof not in surfaces[target]:
+            asof_key = asof
+            if target in surfaces and asof_key not in surfaces[target]:
+                ts_key = pd.Timestamp(asof).normalize()
+                if ts_key in surfaces[target]:
+                    asof_key = ts_key
+
+            if target not in surfaces or asof_key not in surfaces[target]:
                 ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
                 ax.set_title(f"Synthetic Surface - {target} vs peers")
                 return
 
             peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
             synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
-            if asof not in synth_by_date:
+            synth_key = asof_key if asof_key in synth_by_date else pd.Timestamp(asof).normalize()
+            if synth_key not in synth_by_date:
                 ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center")
                 ax.set_title(f"Synthetic Surface - {target} vs peers")
                 return
 
-            tgt_grid = surfaces[target][asof]
-            syn_grid = synth_by_date[asof]
-            tgt_cols_days = _cols_to_days(tgt_grid.columns)
-            syn_cols_days = _cols_to_days(syn_grid.columns)
-            i_tgt = _nearest_tenor_idx(tgt_cols_days, T_days)
-            i_syn = _nearest_tenor_idx(syn_cols_days, T_days)
-            col_tgt = tgt_grid.columns[i_tgt]
-            col_syn = syn_grid.columns[i_syn]
+            tgt_grid = surfaces[target][asof_key].copy()
+            syn_grid = synth_by_date[synth_key].copy()
+            common_rows = tgt_grid.index.intersection(syn_grid.index)
+            common_cols = tgt_grid.columns.intersection(syn_grid.columns)
+            if len(common_rows) < 2 or len(common_cols) < 2:
+                ax.text(0.5, 0.5, "Insufficient common surface grid", ha="center", va="center")
+                ax.set_title(f"Synthetic Surface - {target} vs peers")
+                return
 
-            x_mny = _mny_from_index_labels(tgt_grid.index)
-            y_tgt = tgt_grid[col_tgt].astype(float).to_numpy()
-            y_syn = syn_grid[col_syn].astype(float).to_numpy()
+            tgt = tgt_grid.loc[common_rows, common_cols].astype(float)
+            syn = syn_grid.loc[common_rows, common_cols].astype(float)
+            spread = tgt - syn
 
-            # Improved grid alignment for target vs synthetic comparison
-            if not tgt_grid.index.equals(syn_grid.index):
-                try:
-                    # Try interpolation-based alignment
-                    tgt_mny = _mny_from_index_labels(tgt_grid.index)
-                    syn_mny = _mny_from_index_labels(syn_grid.index)
-                    
-                    # Filter valid data
-                    tgt_valid = np.isfinite(tgt_mny) & np.isfinite(y_tgt)
-                    syn_valid = np.isfinite(syn_mny) & np.isfinite(y_syn)
-                    
-                    if np.sum(tgt_valid) >= 2 and np.sum(syn_valid) >= 2:
-                        from scipy.interpolate import interp1d
-                        tgt_mny_clean = tgt_mny[tgt_valid]
-                        tgt_iv_clean = y_tgt[tgt_valid]
-                        syn_mny_clean = syn_mny[syn_valid]
-                        syn_iv_clean = y_syn[syn_valid]
-                        
-                        # Find common moneyness range
-                        min_common = max(np.min(tgt_mny_clean), np.min(syn_mny_clean))
-                        max_common = min(np.max(tgt_mny_clean), np.max(syn_mny_clean))
-                        
-                        if max_common > min_common:
-                            # Create common grid
-                            common_grid = np.linspace(min_common, max_common, 50)
-                            
-                            # Interpolate both curves onto common grid
-                            f_tgt = interp1d(tgt_mny_clean, tgt_iv_clean, 
-                                           kind='linear', bounds_error=False, fill_value=np.nan)
-                            f_syn = interp1d(syn_mny_clean, syn_iv_clean, 
-                                           kind='linear', bounds_error=False, fill_value=np.nan)
-                            
-                            y_tgt_interp = f_tgt(common_grid)
-                            y_syn_interp = f_syn(common_grid)
-                            
-                            # Use interpolated values
-                            x_mny = common_grid
-                            y_tgt = y_tgt_interp
-                            y_syn = y_syn_interp
-                            
-                except (ImportError, Exception):
-                    # Fallback to intersection-based alignment
-                    common = tgt_grid.index.intersection(syn_grid.index)
-                    if len(common) >= 3:
-                        x_mny = _mny_from_index_labels(common)
-                        y_tgt = tgt_grid.loc[common, col_tgt].astype(float).to_numpy()
-                        y_syn = syn_grid.loc[common, col_syn].astype(float).to_numpy()
+            ax.clear()
+            ax.axis("off")
+            mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
+            if mode_lbl == "corr":
+                mode_lbl = "relative weight matrix"
+            ax.set_title(f"{target} vs weighted synthetic surface | {asof} | {mode_lbl}", pad=12)
 
-            # Filter final valid data before plotting
-            final_valid = np.isfinite(x_mny) & np.isfinite(y_tgt) & np.isfinite(y_syn)
-            if np.sum(final_valid) >= 2:
-                ax.plot(
-                    x_mny[final_valid],
-                    y_tgt[final_valid],
-                    "-",
-                    linewidth=1.8,
-                    label=f"{target} smile @ ~{int(T_days)}d",
-                )
-                mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
-                if mode_lbl == "corr":
-                    mode_lbl = "relative weight matrix"
-                syn_label = f"Synthetic ETF surface ({mode_lbl})" if mode_lbl else "Synthetic ETF surface"
-                ax.plot(
-                    x_mny[final_valid],
-                    y_syn[final_valid],
-                    "--",
-                    linewidth=1.8,
-                    label=syn_label,
-                )
-            else:
-                ax.text(0.5, 0.5, "Insufficient valid data for comparison", ha="center", va="center")
-            ax.set_xlabel("Moneyness (K/S)")
-            ax.set_ylabel("Implied Vol")
-            ax.set_title(f"Synthetic Construction vs {target} | asof={asof} | ~{int(T_days)}d")
-            ax.legend(loc="best", fontsize=9)
+            panels = [
+                (target, tgt, "viridis"),
+                ("Synthetic", syn, "viridis"),
+                ("Target - Synthetic", spread, "coolwarm"),
+            ]
+            finite_iv = np.concatenate([
+                tgt.to_numpy(float)[np.isfinite(tgt.to_numpy(float))],
+                syn.to_numpy(float)[np.isfinite(syn.to_numpy(float))],
+            ])
+            vmin = float(np.nanmin(finite_iv)) if finite_iv.size else None
+            vmax = float(np.nanmax(finite_iv)) if finite_iv.size else None
+            spread_abs = float(np.nanmax(np.abs(spread.to_numpy(float)))) if np.isfinite(spread.to_numpy(float)).any() else 0.01
+
+            for i, (label, grid, cmap) in enumerate(panels):
+                child = ax.inset_axes([0.02 + i * 0.325, 0.08, 0.30, 0.78])
+                if not hasattr(ax.figure, "_surface_aux_axes"):
+                    ax.figure._surface_aux_axes = []
+                ax.figure._surface_aux_axes.append(child)
+                arr = grid.to_numpy(float)
+                kwargs = {"aspect": "auto", "origin": "lower", "cmap": cmap}
+                if label != "Target - Synthetic":
+                    kwargs.update(vmin=vmin, vmax=vmax)
+                else:
+                    kwargs.update(vmin=-spread_abs, vmax=spread_abs)
+                im = child.imshow(arr, **kwargs)
+                child.set_title(label, fontsize=10)
+                child.set_xlabel("Tenor (days)", fontsize=8)
+                if i == 0:
+                    child.set_ylabel("Moneyness", fontsize=8)
+                child.set_xticks(range(len(common_cols)))
+                child.set_xticklabels([str(c) for c in common_cols], rotation=45, ha="right", fontsize=7)
+                child.set_yticks(range(len(common_rows)))
+                child.set_yticklabels([str(r) for r in common_rows], fontsize=7)
+                cbar = ax.figure.colorbar(im, ax=child, fraction=0.046, pad=0.02)
+                ax.figure._surface_aux_axes.append(cbar.ax)
+                cbar.ax.tick_params(labelsize=7)
         except Exception:
             ax.text(0.5, 0.5, "Synthetic surface plotting failed", ha="center", va="center")
             ax.set_title(f"Synthetic Surface - {target} vs peers")
@@ -1111,7 +1112,7 @@ class PlotManager:
     def is_smile_active(self) -> bool:
         return (
             self._current_plot_type is not None
-            and self._current_plot_type.startswith("Smile")
+            and plot_id(self._current_plot_type) == "smile"
             and self._smile_ctx is not None
         )
 
@@ -1131,34 +1132,40 @@ class PlotManager:
 
     # -------------------- term structure --------------------
     
-    def _plot_term(self, ax, data, target, asof, x_units, ci):
+    def _plot_term(self, ax, data, target, asof, x_units, ci, *, overlay_peers: bool = False, overlay_synth: bool = True):
         """Plot precomputed ATM term structure and optional synthetic overlay."""
         atm_curve = data.get("atm_curve")
+        title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
+        peer_curves = data.get("peer_curves") or {}
+        weights = data.get("weights")
+        synth_curve = data.get("synth_curve") if overlay_synth else None
+
+        if peer_curves or (synth_curve is not None and not synth_curve.empty):
+            if peer_curves:
+                title += f" | peers={len(peer_curves)}"
+            if synth_curve is not None and not synth_curve.empty:
+                title += f" | synthetic N={len(synth_curve)}"
+            plot_term_structure_comparison(
+                ax,
+                atm_curve,
+                peer_curves=peer_curves if overlay_peers or peer_curves else {},
+                synth_curve=synth_curve,
+                weights=weights,
+                x_units=x_units,
+                fit=True,
+                show_ci=bool(ci and ci > 0 and {"atm_lo", "atm_hi"}.issubset(atm_curve.columns)),
+                title=title,
+            )
+            return
+
         plot_atm_term_structure(
             ax,
             atm_curve,
             x_units=x_units,
             fit=True,
-            show_ci=bool(ci and ci > 0 and {"ci_lo", "ci_hi"}.issubset(atm_curve.columns)),
+            show_ci=bool(ci and ci > 0 and {"atm_lo", "atm_hi"}.issubset(atm_curve.columns)),
         )
-        title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
-        synth_bands = data.get("synth_bands")
-        if synth_bands is not None:
-            bands = synth_bands
-            if x_units != "days":
-                # Convert x-axis from days to years for the bands
-                bands = type(synth_bands)(
-                    x=synth_bands.x / 365.25,
-                    mean=synth_bands.mean,
-                    lo=synth_bands.lo,
-                    hi=synth_bands.hi,
-                    level=synth_bands.level,
-                )
-            plot_synthetic_etf_term_structure(ax, bands)
-            # restore axis labels overridden by synthetic plot
-            ax.set_xlabel("Time to Expiry (days)" if x_units == "days" else "Time to Expiry (years)")
-            ax.set_ylabel("Implied Vol (ATM)")
-            title += f" - Synthetic Overlay (N={len(bands.x)})"
+        ax.set_title(title)
 
     # -------------------- correlation matrix --------------------
     def _plot_corr_matrix(
@@ -1235,7 +1242,7 @@ class PlotManager:
     # -------------------- animation control --------------------
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if animation is supported for the given plot type."""
-        return plot_type in ["smile", "surface"]
+        return plot_type in ["smile", "surface", "synthetic_surface"]
 
     def is_animation_active(self) -> bool:
         """Check if an animation is currently active."""
