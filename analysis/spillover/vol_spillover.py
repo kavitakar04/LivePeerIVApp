@@ -3,6 +3,12 @@ import numpy as np
 import sqlite3
 from typing import List, Dict, Iterable, Callable, Tuple, Optional
 from data.ticker_groups import get_groups_for_target, load_ticker_group
+from analysis.settings import (
+    DEFAULT_SPILLOVER_EVENT_THRESHOLD,
+    DEFAULT_SPILLOVER_HORIZONS,
+    DEFAULT_SPILLOVER_LOOKBACK_DAYS,
+    DEFAULT_SPILLOVER_REGRESSION_WINDOW_DAYS,
+)
 
 """Tools to detect implied-volatility events and measure spillovers.
 
@@ -30,7 +36,7 @@ def load_iv_data(path: str, use_raw: bool = False) -> pd.DataFrame:
     return df.sort_values(["ticker", "date"])
 
 
-def detect_events(df: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
+def detect_events(df: pd.DataFrame, threshold: float = DEFAULT_SPILLOVER_EVENT_THRESHOLD) -> pd.DataFrame:
     """Flag dates where a ticker's IV changes by ``threshold`` or more.
 
     Returns a DataFrame with columns ``ticker``, ``date``, ``rel_change`` and
@@ -60,7 +66,7 @@ def _load_peers_for_target(target: str, conn=None) -> List[str]:
 def compute_weights_and_regression(
     df: pd.DataFrame,
     target: str,
-    window: int = 90,
+    window: int = DEFAULT_SPILLOVER_REGRESSION_WINDOW_DAYS,
     conn: Optional[sqlite3.Connection] = None,
 ) -> Tuple[pd.Series, pd.Series]:
     """Compute peer weights and regression betas from historical IV data.
@@ -134,7 +140,7 @@ def compute_weights_and_regression(
 def compute_responses(df: pd.DataFrame,
                       events: pd.DataFrame,
                       peers: Dict[str, List[str]],
-                      horizons: Iterable[int] = (1, 3, 5)) -> pd.DataFrame:
+                      horizons: Iterable[int] = DEFAULT_SPILLOVER_HORIZONS) -> pd.DataFrame:
     """Compute peer responses for each event over given horizons.
 
     Response for peer j at horizon ``h`` is the percentage change in j's IV
@@ -180,7 +186,7 @@ def compute_responses(df: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
-def summarise(responses: pd.DataFrame, threshold: float = 0.10) -> pd.DataFrame:
+def summarise(responses: pd.DataFrame, threshold: float = DEFAULT_SPILLOVER_EVENT_THRESHOLD) -> pd.DataFrame:
     """Summarise peer responses across events."""
     def _agg(g: pd.DataFrame) -> pd.Series:
         hr = (g["peer_pct"].abs() >= threshold).mean()
@@ -211,10 +217,10 @@ def run_spillover(
     source: pd.DataFrame | Callable[[], pd.DataFrame],
     *,
     tickers: Iterable[str] | None = None,
-    threshold: float = 0.10,
-    lookback: int = 60,
+    threshold: float = DEFAULT_SPILLOVER_EVENT_THRESHOLD,
+    lookback: int = DEFAULT_SPILLOVER_LOOKBACK_DAYS,
     top_k: int = 3,
-    horizons: Iterable[int] = (1, 3, 5),
+    horizons: Iterable[int] = DEFAULT_SPILLOVER_HORIZONS,
     events_path: str = "spill_events.parquet",
     summary_path: str = "spill_summary.parquet",
 ) -> Dict[str, pd.DataFrame]:

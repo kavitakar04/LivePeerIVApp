@@ -13,11 +13,19 @@ from data.quote_quality import (
     filter_quotes,
 )
 from analysis.pillars import load_atm, nearest_pillars
+from analysis.settings import (
+    DEFAULT_MONEYNESS_BINS,
+    DEFAULT_ATM_BAND,
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_PILLAR_DAYS,
+    DEFAULT_PILLAR_TOLERANCE_DAYS,
+    DEFAULT_SURFACE_TENORS,
+)
 
 
-# Default grid (tweak as needed)
-DEFAULT_TENORS = (7, 30, 60, 90, 180, 365)
-DEFAULT_MNY_BINS: Tuple[Tuple[float, float], ...] = ((0.80, 0.90), (0.95, 1.05), (1.10, 1.25))
+# Backward-compatible names used by callers/tests.
+DEFAULT_TENORS = DEFAULT_SURFACE_TENORS
+DEFAULT_MNY_BINS: Tuple[Tuple[float, float], ...] = DEFAULT_MONEYNESS_BINS
 
 
 def _nearest_tenor(days: float, tenors: Iterable[int]) -> int:
@@ -212,8 +220,8 @@ def combine_surfaces(
 
 def build_synthetic_iv(
     weights: Mapping[str, float],
-    pillar_days: Union[int, Iterable[int]] = (7, 30, 60, 90, 180, 365),
-    tolerance_days: float = 7.0,
+    pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLAR_DAYS,
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     conn: Optional["sqlite3.Connection"] = None,
 ) -> pd.DataFrame:
     """
@@ -311,8 +319,8 @@ def build_synthetic_iv(
 def build_synthetic_iv_by_rank(
     weights: Mapping[str, float],
     asof: str,
-    max_expiries: int = 6,
-    atm_band: float = 0.05,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
+    atm_band: float = DEFAULT_ATM_BAND,
 ) -> pd.DataFrame:
     """Combine peer ATM vols by expiry rank into synthetic curve for one date."""
     from analysis.analysis_pipeline import get_smile_slice

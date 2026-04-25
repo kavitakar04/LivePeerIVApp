@@ -96,27 +96,27 @@ def fit_and_plot_smile(
         if cp is not None:
             call_mask = cp == "C"
             put_mask  = cp == "P"
-            obs_artists = []
             if call_mask.any():
                 pts_c = ax.scatter(K[call_mask] / S, iv[call_mask],
                                    s=20, alpha=0.85, color="#1f77b4", label="Calls")
-                obs_artists.append(pts_c)
+                if enable_toggles:
+                    series_map["Calls"] = [pts_c]
             if put_mask.any():
                 pts_p = ax.scatter(K[put_mask] / S, iv[put_mask],
                                    s=20, alpha=0.85, color="#d62728", label="Puts")
-                obs_artists.append(pts_p)
+                if enable_toggles:
+                    series_map["Puts"] = [pts_p]
             # fallback for any unlabelled rows
             other_mask = ~call_mask & ~put_mask
             if other_mask.any():
                 pts_o = ax.scatter(K[other_mask] / S, iv[other_mask],
-                                   s=20, alpha=0.85, color="grey", label="Observed")
-                obs_artists.append(pts_o)
-            if enable_toggles:
-                series_map["Observed Points"] = obs_artists
+                                   s=20, alpha=0.85, color="grey", label="Other")
+                if enable_toggles:
+                    series_map["Other"] = [pts_o]
         else:
             pts = ax.scatter(K / S, iv, s=20, alpha=0.85, label="Observed")
             if enable_toggles:
-                series_map["Observed Points"] = [pts]
+                series_map["Observed"] = [pts]
 
     # ---- fit + optional CI
     if not params:

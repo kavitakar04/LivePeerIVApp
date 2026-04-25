@@ -35,7 +35,8 @@ if str(ROOT) not in sys.path:
 
 from analysis.cache_io import compute_or_load
 from analysis.analysis_pipeline import prepare_smile_data, get_smile_slice
-from display.plotting.correlation_detail_plot import _corr_by_expiry_rank
+from analysis.correlation_view import corr_by_expiry_rank
+from analysis.settings import DEFAULT_ATM_BAND, DEFAULT_MAX_EXPIRIES
 from analysis.spillover.vol_spillover import run_spillover, load_iv_data
 
 
@@ -49,7 +50,7 @@ def _warm_smile(task: Dict[str, Any], db_path: str) -> None:
     peers = task.get("peers")
     weights = task.get("weights")
     overlay_peers = bool(task.get("overlay_peers", False))
-    max_expiries = int(task.get("max_expiries", 6))
+    max_expiries = int(task.get("max_expiries", DEFAULT_MAX_EXPIRIES))
 
     payload = {
         "ticker": ticker,
@@ -79,8 +80,8 @@ def _warm_smile(task: Dict[str, Any], db_path: str) -> None:
 def _warm_corr(task: Dict[str, Any], db_path: str) -> None:
     tickers = [t.upper() for t in task["tickers"]]
     asof = task["asof"]
-    max_expiries = int(task.get("max_expiries", 6))
-    atm_band = float(task.get("atm_band", 0.05))
+    max_expiries = int(task.get("max_expiries", DEFAULT_MAX_EXPIRIES))
+    atm_band = float(task.get("atm_band", DEFAULT_ATM_BAND))
 
     payload = {
         "tickers": sorted(tickers),
@@ -90,7 +91,7 @@ def _warm_corr(task: Dict[str, Any], db_path: str) -> None:
     }
 
     def _builder() -> Any:
-        return _corr_by_expiry_rank(
+        return corr_by_expiry_rank(
             get_slice=get_smile_slice,
             tickers=tickers,
             asof=asof,

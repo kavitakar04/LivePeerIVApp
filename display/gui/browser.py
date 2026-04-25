@@ -86,8 +86,15 @@ class BrowserApp(tk.Tk):
         self.speed_scale.pack(side=tk.LEFT, padx=2)
 
 
+        # Description bar — plain-English context for the current plot
+        self.lbl_desc = ttk.Label(
+            self.tab_browser, text="", anchor="w", foreground="gray40",
+            font=("TkDefaultFont", 9), wraplength=1100, justify=tk.LEFT,
+        )
+        self.lbl_desc.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 2))
+
         # Canvas
-        self.fig = plt.Figure(figsize=(11.2, 6.6))
+        self.fig = plt.Figure(figsize=(11.2, 6.4))
         self.ax = self.fig.add_subplot(1, 1, 1)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.tab_browser)
         self.canvas.draw()
@@ -264,6 +271,7 @@ class BrowserApp(tk.Tk):
                         self._update_nav_buttons()
                         self._update_animation_buttons()
                         self.tab_params.update(self.plot_mgr.last_fit_info)
+                        self.lbl_desc.config(text=self.plot_mgr.last_description)
                     self.after(0, finish)
 
             except Exception as e:
@@ -280,10 +288,12 @@ class BrowserApp(tk.Tk):
     def _prev_expiry(self):
         self.plot_mgr.prev_expiry()
         self.canvas.draw()
+        self.lbl_desc.config(text=self.plot_mgr.last_description)
 
     def _next_expiry(self):
         self.plot_mgr.next_expiry()
         self.canvas.draw()
+        self.lbl_desc.config(text=self.plot_mgr.last_description)
 
     def _update_nav_buttons(self):
         state = tk.NORMAL if self.plot_mgr.is_smile_active() else tk.DISABLED

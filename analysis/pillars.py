@@ -8,10 +8,16 @@ import matplotlib.pyplot as plt
 
 
 from data.db_utils import get_conn
+from analysis.settings import (
+    DEFAULT_ATM_BAND,
+    DEFAULT_EXTENDED_PILLAR_DAYS,
+    DEFAULT_NEAR_TERM_PILLAR_DAYS,
+    DEFAULT_PILLAR_TOLERANCE_DAYS,
+)
 
-DEFAULT_PILLARS_DAYS = [7, 14, 30]  # Realistic pillars for typical options data
+DEFAULT_PILLARS_DAYS = list(DEFAULT_NEAR_TERM_PILLAR_DAYS)
 # Extended pillars for when longer-term data is available
-EXTENDED_PILLARS_DAYS = [7, 14, 30, 60, 90, 180, 365]
+EXTENDED_PILLARS_DAYS = list(DEFAULT_EXTENDED_PILLAR_DAYS)
 
 
 def detect_available_pillars(
@@ -20,40 +26,45 @@ def detect_available_pillars(
     asof: str,
     candidate_pillars: Iterable[int] = EXTENDED_PILLARS_DAYS,
     min_tickers_per_pillar: int = 2,
-    tol_days: float = 7.0,
+    tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
+    slices: Optional[Dict[str, "pd.DataFrame"]] = None,
 ) -> List[int]:
-    """
-    Detect which pillars have sufficient data across the given tickers.
+    """Detect which pillars have sufficient data across the given tickers.
 
-    Returns pillars where at least ``min_tickers_per_pillar`` tickers have
-    valid data. If no pillar meets this requirement, pillars with any data are
-    returned instead to provide a best-effort result for sparse datasets.
+    Pass ``slices`` (a dict of pre-loaded ticker DataFrames from
+    ``get_smile_slices_batch``) to skip per-ticker DB queries.
     """
     candidate_pillars = list(candidate_pillars)
     pillar_coverage = {p: 0 for p in candidate_pillars}
-    
+
     for ticker in tickers:
-        day_df = get_smile_slice(ticker, asof, T_target_years=None)
-        if day_df.empty:
+        ticker_up = ticker.upper()
+        if slices is not None:
+            day_df = slices.get(ticker_up, pd.DataFrame())
+        else:
+            day_df = get_smile_slice(ticker_up, asof, T_target_years=None)
+        if day_df is None or day_df.empty:
             continue
-            
+
         for pillar in candidate_pillars:
             atm_val = _atm_by_pillar_from_day_slice(day_df, pillar, tol_days=tol_days)
             if atm_val is not None and np.isfinite(atm_val):
                 pillar_coverage[pillar] += 1
-    
-    # Return pillars with sufficient coverage
+
     good_pillars = [p for p, count in pillar_coverage.items() if count >= min_tickers_per_pillar]
-
     if not good_pillars:
-        # Fallback: include pillars that have any data at all
         good_pillars = [p for p, count in pillar_coverage.items() if count > 0]
-
     return sorted(good_pillars)
 
 def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
-                                  atm_band: float = 0.05, tol_days: float = 7.0) -> Optional[float]:
-    """Median IV within |moneyness-1|<=band from the expiry nearest to pillar_days (within tol)."""
+                                  atm_band: float = DEFAULT_ATM_BAND, tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS) -> Optional[float]:
+    """Return ATM IV for the expiry nearest to ``pillar_days`` (within ``tol_days``).
+
+    Priority order:
+      1. is_atm=1 rows (flagged at ingestion via delta proximity — most accurate).
+      2. Median IV within |moneyness-1| <= atm_band.
+      3. Nearest-to-ATM single row (last resort).
+    """
     if day_df is None or day_df.empty:
         return None
     target_T = pillar_days / 365.25
@@ -66,14 +77,24 @@ def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
     near = day_df.loc[np.isclose(day_df["T"], Tvals[j])].copy()
     if near.empty:
         return None
+
+    # 1. DB-flagged ATM option (delta-based, set at ingestion)
+    if "is_atm" in near.columns:
+        atm_iv = pd.to_numeric(near.loc[near["is_atm"] == 1, "sigma"], errors="coerce").dropna()
+        if not atm_iv.empty:
+            return float(atm_iv.median())
+
+    # 2. Moneyness band
     if "moneyness" in near.columns:
-        mask = (near["moneyness"] - 1.0).abs() <= atm_band
-        cand = near.loc[mask, "sigma"]
-        if not cand.empty and np.isfinite(cand).any():
-            return float(pd.to_numeric(cand, errors="coerce").median())
-        # fallback: nearest-to-ATM
+        cand = pd.to_numeric(
+            near.loc[(near["moneyness"] - 1.0).abs() <= atm_band, "sigma"], errors="coerce"
+        ).dropna()
+        if not cand.empty:
+            return float(cand.median())
+        # 3. Nearest-to-ATM single row
         k = int(np.argmin(np.abs(near["moneyness"] - 1.0)))
         return float(near["sigma"].iloc[k])
+
     return float(pd.to_numeric(near["sigma"], errors="coerce").median())
 
 def build_atm_matrix(
@@ -81,16 +102,17 @@ def build_atm_matrix(
     tickers: Iterable[str],
     asof: str,
     pillars_days: Iterable[int],
-    atm_band: float = 0.05,
-    tol_days: float = 7.0,
+    atm_band: float = DEFAULT_ATM_BAND,
+    tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     min_pillars: int = 3,
     corr_method: str = "pearson",   # "pearson" | "spearman" | "kendall"
     demean_rows: bool = False,
+    slices: Optional[Dict[str, "pd.DataFrame"]] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Returns:
-      atm_df: rows = tickers, cols = pillars (days), values = ATM vol (float or NaN)
-      corr_df: correlation matrix (tickers x tickers) using rows of atm_df across pillars
+    """Return (atm_df, corr_df).
+
+    Pass ``slices`` (dict from ``get_smile_slices_batch``) to avoid N separate
+    DB queries — the batch was already loaded by the caller.
     """
     tickers = [t.upper() for t in tickers]
     pillars_days = [int(p) for p in pillars_days]
@@ -98,7 +120,11 @@ def build_atm_matrix(
     # Build ATM-by-pillar table
     rows = []
     for t in tickers:
-        day_df = get_smile_slice(t, asof, T_target_years=None)
+        day_df = (
+            slices.get(t, pd.DataFrame())
+            if slices is not None
+            else get_smile_slice(t, asof, T_target_years=None)
+        )
         row = {}
         for d in pillars_days:
             row[d] = _atm_by_pillar_from_day_slice(day_df, d, atm_band=atm_band, tol_days=tol_days)
@@ -200,7 +226,7 @@ def load_atm(conn=None) -> pd.DataFrame:
 def nearest_pillars(
     df: pd.DataFrame,
     pillars_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
-    tolerance_days: float = 7.0,
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
 ) -> pd.DataFrame:
     """
     From a DataFrame that includes ['asof_date','ticker','T', ...],
@@ -347,7 +373,7 @@ def _fit_smile_get_atm(
 # ----------------------------
 def compute_atm_by_expiry(
     df: pd.DataFrame,
-    atm_band: float = 0.05,
+    atm_band: float = DEFAULT_ATM_BAND,
     method: str = "fit",        # "fit" (SVI/SABR/poly) or "median"
     model: str = "auto",        # when method="fit": "svi" | "sabr" | "auto"
     vega_weighted: bool = True,

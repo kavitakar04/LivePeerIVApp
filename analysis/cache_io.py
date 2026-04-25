@@ -1,7 +1,6 @@
 import json
 import pickle
 import sqlite3
-import time
 import zlib
 import hashlib
 from pathlib import Path
@@ -11,7 +10,9 @@ import queue
 import threading
 import time
 
-TTL_SEC = 900
+from analysis.settings import DEFAULT_CALC_CACHE_TTL_SEC
+
+TTL_SEC = DEFAULT_CALC_CACHE_TTL_SEC
 ARTIFACT_VERSION: Dict[str, str] = {}
 
 
@@ -148,11 +149,11 @@ class WarmupWorker:
 
     def __init__(self, db_path: str = "data/calculations.db"):
         self.db_path = db_path
-        self._queue: "queue.Queue[Tuple[str, Any, Callable[[Any], Any]]]" = queue.Queue()
+        self._queue: "queue.Queue[Tuple[str, Any, Callable[[], Any]]]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def enqueue(self, kind: str, payload: Any, builder_fn: Callable[[Any], Any]) -> None:
+    def enqueue(self, kind: str, payload: Any, builder_fn: Callable[[], Any]) -> None:
         """Add a warmup job to the queue."""
         self._queue.put((kind, payload, builder_fn))
 
@@ -163,7 +164,7 @@ class WarmupWorker:
         while True:
             kind, payload, builder_fn = self._queue.get()
             try:
-                compute_or_load(kind, payload, builder_fn)
+                compute_or_load(kind, payload, builder_fn, self.db_path)
             except Exception:
                 # Never let cache warmup failures impact the GUI thread.
                 pass
@@ -171,4 +172,3 @@ class WarmupWorker:
                 # Mark job done and briefly yield control to keep UI responsive.
                 self._queue.task_done()
                 time.sleep(0.01)
-

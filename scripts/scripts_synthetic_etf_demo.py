@@ -25,6 +25,11 @@ if str(ROOT) not in sys.path:
 from analysis.analysis_synthetic_etf import SyntheticETFConfig, SyntheticETFBuilder
 from display.plotting.display_viewers_synthetic_etf_viewer import show_synthetic_etf
 from analysis.analysis_pipeline import ingest_and_process, available_dates
+from analysis.settings import (
+    DEFAULT_PILLAR_DAYS,
+    DEFAULT_PILLAR_TOLERANCE_DAYS,
+    DEFAULT_RV_LOOKBACK_DAYS,
+)
 
 def parse_args():
     p = argparse.ArgumentParser(description="Synthetic ETF Surface Demo")
@@ -32,10 +37,10 @@ def parse_args():
     p.add_argument("--peers", nargs="+", required=True, help="Peer tickers")
     p.add_argument("--weight-mode", choices=["corr", "pca", "cosine", "equal", "custom"], default="corr")
     p.add_argument("--custom-weights", nargs="+", help="Ticker=weight pairs if weight-mode=custom")
-    p.add_argument("--pillar-days", nargs="+", type=int, default=[7, 30, 60, 90])
+    p.add_argument("--pillar-days", nargs="+", type=int, default=list(DEFAULT_PILLAR_DAYS[:4]))
     p.add_argument("--tenors", nargs="+", type=int, default=None, help="Override default tenors (days)")
-    p.add_argument("--tolerance-days", type=float, default=7.0)
-    p.add_argument("--lookback", type=int, default=60)
+    p.add_argument("--tolerance-days", type=float, default=DEFAULT_PILLAR_TOLERANCE_DAYS)
+    p.add_argument("--lookback", type=int, default=DEFAULT_RV_LOOKBACK_DAYS)
     p.add_argument("--no-show", action="store_true", help="Do not display matplotlib viewer")
     p.add_argument("--export-dir", help="If provided, export artifacts to this directory")
     p.add_argument("--ingest", action="store_true", help="Ingest data before running")

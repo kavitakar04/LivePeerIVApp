@@ -9,14 +9,30 @@ specify how weights are computed via the ``weight_mode`` parameter.
 
 from __future__ import annotations
 
-from typing import Iterable, Tuple, Optional, List, Dict
+from typing import Iterable, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from analysis.unified_weights import compute_unified_weights
-from analysis.compute_or_load import compute_or_load
+from analysis.correlation_view import (
+    CorrelationViewData,
+    compute_atm_curve_simple,
+    corr_by_expiry_rank,
+    coverage_by_ticker,
+    finite_cell_summary,
+    maybe_compute_weights,
+    overlap_counts,
+    prepare_correlation_view,
+    split_weight_mode,
+)
+from analysis.settings import (
+    DEFAULT_ATM_BAND,
+    DEFAULT_CLIP_NEGATIVE_WEIGHTS,
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_WEIGHT_METHOD,
+    DEFAULT_WEIGHT_POWER,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -24,84 +40,26 @@ from analysis.compute_or_load import compute_or_load
 # ---------------------------------------------------------------------------
 
 
-def _compute_atm_curve_simple(df: pd.DataFrame, atm_band: float = 0.05) -> pd.DataFrame:
-    """
-    Compute a simple ATM implied volatility per expiry using only the median
-    of near‑ATM quotes.  This function avoids reliance on fixed pillar days.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Slice of option quotes for a single ticker on a single date.
-    atm_band : float, optional
-        Relative band around ATM (moneyness ~ 1) used to compute medians.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Columns ``T`` and ``atm_vol`` sorted by increasing maturity ``T``.
-    """
-    need_cols = {"T", "moneyness", "sigma"}
-    if df is None or df.empty or not need_cols.issubset(df.columns):
-        return pd.DataFrame(columns=["T", "atm_vol"])
-    d = df.copy()
-    d["T"] = pd.to_numeric(d["T"], errors="coerce")
-    d["moneyness"] = pd.to_numeric(d["moneyness"], errors="coerce")
-    d["sigma"] = pd.to_numeric(d["sigma"], errors="coerce")
-    d = d.dropna(subset=["T", "moneyness", "sigma"])
-    rows: List[dict[str, float]] = []
-    for T_val, grp in d.groupby("T"):
-        g = grp.dropna(subset=["moneyness", "sigma"])
-        in_band = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
-        if not in_band.empty:
-            atm_vol = float(in_band["sigma"].median())
-        else:
-            idx = int((g["moneyness"] - 1.0).abs().idxmin())
-            atm_vol = float(g.loc[idx, "sigma"])
-        rows.append({"T": float(T_val), "atm_vol": atm_vol})
-    return pd.DataFrame(rows).sort_values("T").reset_index(drop=True)
+def _compute_atm_curve_simple(df: pd.DataFrame, atm_band: float = DEFAULT_ATM_BAND) -> pd.DataFrame:
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return compute_atm_curve_simple(df, atm_band=atm_band)
 
 
 def _corr_by_expiry_rank(
     get_slice,
     tickers: Iterable[str],
     asof: str,
-    max_expiries: int = 6,
-    atm_band: float = 0.05,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
+    atm_band: float = DEFAULT_ATM_BAND,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Build an ATM matrix and correlation matrix without using pillars.
-
-    The matrix rows correspond to tickers, columns to expiry ranks (0,1,…).
-    Correlations are computed across expiry ranks.
-    """
-    rows: List[pd.Series] = []
-    for t in tickers:
-        try:
-            df = get_slice(
-                t, asof_date=asof, T_target_years=None, call_put=None, nearest_by="T"
-            )
-        except Exception:
-            df = None
-        if df is None or df.empty:
-            continue
-        atm_df = _compute_atm_curve_simple(df, atm_band=atm_band)
-        values: Dict[int, float] = {}
-        for i in range(max_expiries):
-            if i < len(atm_df):
-                v = atm_df.at[i, "atm_vol"]
-                values[i] = float(v) if pd.notna(v) else np.nan
-            else:
-                values[i] = np.nan
-        rows.append(pd.Series(values, name=t.upper()))
-    atm_rank_df = pd.DataFrame(rows)
-    if atm_rank_df.empty or len(atm_rank_df.index) < 2:
-        corr_df = pd.DataFrame(
-            index=atm_rank_df.index, columns=atm_rank_df.index, dtype=float
-        )
-    else:
-        corr_df = atm_rank_df.transpose().corr(method="pearson", min_periods=2)
-    return atm_rank_df, corr_df
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return corr_by_expiry_rank(
+        get_slice=get_slice,
+        tickers=tickers,
+        asof=asof,
+        max_expiries=max_expiries,
+        atm_band=atm_band,
+    )
 
 
 def _maybe_compute_weights(
@@ -114,22 +72,16 @@ def _maybe_compute_weights(
     clip_negative: bool,
     **weight_config,
 ) -> Optional[pd.Series]:
-    """Compute unified weights if ``target`` and ``peers`` are provided."""
-    if not target or not peers:
-        return None
-    peers_list = list(peers)
-    try:
-        return compute_unified_weights(
-            target=target,
-            peers=peers_list,
-            mode=weight_mode,
-            asof=asof,
-            clip_negative=clip_negative,
-            power=weight_power,
-            **weight_config,
-        )
-    except Exception:
-        return None
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return maybe_compute_weights(
+        target=target,
+        peers=peers,
+        asof=asof,
+        weight_mode=weight_mode,
+        weight_power=weight_power,
+        clip_negative=clip_negative,
+        **weight_config,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -145,12 +97,12 @@ def compute_and_plot_correlation(
     *,
     target: Optional[str] = None,
     peers: Optional[Iterable[str]] = None,
-    atm_band: float = 0.05,
+    atm_band: float = DEFAULT_ATM_BAND,
     show_values: bool = True,
-    clip_negative: bool = True,
-    weight_power: float = 1.0,
-    max_expiries: int = 6,
-    weight_mode: str = "corr",
+    clip_negative: bool = DEFAULT_CLIP_NEGATIVE_WEIGHTS,
+    weight_power: float = DEFAULT_WEIGHT_POWER,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
+    weight_mode: str = DEFAULT_WEIGHT_METHOD,
     **weight_config,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[pd.Series]]:
     """
@@ -163,47 +115,33 @@ def compute_and_plot_correlation(
     supplied, along with any extra keyword arguments understood by the unified
     weight system.
     """
-    tickers = [t.upper() for t in tickers]
-    payload = {
-        "tickers": sorted(tickers),
-        "asof": pd.to_datetime(asof).floor("min").isoformat(),
-        "atm_band": atm_band,
-        "max_expiries": max_expiries,
-    }
-
-    def _builder() -> Tuple[pd.DataFrame, pd.DataFrame]:
-        return _corr_by_expiry_rank(
-            get_slice=get_smile_slice,
-            tickers=tickers,
-            asof=asof,
-            max_expiries=max_expiries,
-            atm_band=atm_band,
-        )
-
-    atm_df, corr_df = compute_or_load("corr", payload, _builder)
-
-    weights = _maybe_compute_weights(
+    view = prepare_correlation_view(
+        get_smile_slice=get_smile_slice,
+        tickers=tickers,
+        asof=asof,
         target=target,
         peers=peers,
-        asof=asof,
-        weight_mode=weight_mode,
-        weight_power=weight_power,
+        atm_band=atm_band,
         clip_negative=clip_negative,
+        weight_power=weight_power,
+        max_expiries=max_expiries,
+        weight_mode=weight_mode,
         **weight_config,
     )
 
     plot_correlation_details(
         ax,
-        corr_df,
-        weights=weights,
+        view.corr_df,
+        weights=view.weights,
         show_values=show_values,
-        atm_df=atm_df,
+        atm_df=view.atm_df,
+        view_data=view,
         target=target,
         asof=asof,
         weight_mode=weight_mode,
         max_expiries=max_expiries,
     )
-    return atm_df, corr_df, weights
+    return view.atm_df, view.corr_df, view.weights
 
 
 def _clear_corr_side_axes(fig: plt.Figure) -> None:
@@ -233,60 +171,26 @@ def _coverage_by_ticker(
     corr_df: pd.DataFrame,
     atm_df: Optional[pd.DataFrame],
 ) -> pd.Series:
-    """Count finite expiry-rank ATM observations available for each ticker."""
-    if atm_df is None or atm_df.empty:
-        return pd.Series(dtype=float)
-    coverage = atm_df.apply(pd.to_numeric, errors="coerce").notna().sum(axis=1)
-    return coverage.reindex(corr_df.index).fillna(0).astype(int)
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return coverage_by_ticker(corr_df, atm_df)
 
 
 def _overlap_counts(
     corr_df: pd.DataFrame,
     atm_df: Optional[pd.DataFrame],
 ) -> Optional[pd.DataFrame]:
-    """Pairwise count of shared finite expiry-rank ATM observations."""
-    if atm_df is None or atm_df.empty:
-        return None
-    aligned = atm_df.reindex(corr_df.index)
-    valid = aligned.apply(pd.to_numeric, errors="coerce").notna().astype(int)
-    counts = valid.to_numpy() @ valid.to_numpy().T
-    return pd.DataFrame(counts, index=aligned.index, columns=aligned.index)
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return overlap_counts(corr_df, atm_df)
 
 
 def _split_weight_mode(weight_mode: Optional[str]) -> tuple[str, str]:
-    """Return user-facing method and basis labels from a canonical weight mode."""
-    mode = str(weight_mode or "").strip().lower()
-    if not mode:
-        return "not selected", "expiry-rank ATM IV"
-    if mode == "oi":
-        return "open interest", "contracts"
-    if "_" in mode:
-        method, basis = mode.split("_", 1)
-    else:
-        method, basis = mode, "iv_atm"
-    method_labels = {
-        "corr": "correlation",
-        "pca": "PCA",
-        "cosine": "cosine",
-        "equal": "equal",
-        "oi": "open interest",
-    }
-    basis_labels = {
-        "iv_atm": "ATM IV",
-        "iv_atm_ranks": "ATM IV expiry ranks",
-        "ul": "underlying returns",
-        "surface": "IV surface",
-        "surface_grid": "IV surface grid",
-    }
-    return method_labels.get(method, method), basis_labels.get(basis, basis)
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return split_weight_mode(weight_mode)
 
 
 def _finite_cell_summary(corr_df: pd.DataFrame) -> tuple[int, int, float]:
-    data = corr_df.to_numpy(dtype=float)
-    finite_count = int(np.sum(np.isfinite(data)))
-    total_elements = int(data.size)
-    pct = finite_count / total_elements if total_elements > 0 else 0.0
-    return finite_count, total_elements, pct
+    """Backward-compatible wrapper around analysis.correlation_view."""
+    return finite_cell_summary(corr_df)
 
 
 def _reserve_correlation_layout(
@@ -330,6 +234,7 @@ def plot_correlation_details(
     show_values: bool = True,
     *,
     atm_df: Optional[pd.DataFrame] = None,
+    view_data: Optional[CorrelationViewData] = None,
     target: Optional[str] = None,
     asof: Optional[str] = None,
     weight_mode: Optional[str] = None,
@@ -349,8 +254,22 @@ def plot_correlation_details(
         ax.text(0.5, 0.5, "No correlation data", ha="center", va="center")
         return
 
+    if view_data is not None:
+        corr_df = view_data.corr_df
+        weights = view_data.weights if weights is None else weights
+        atm_df = view_data.atm_df if atm_df is None else atm_df
+        target = view_data.context.get("target") or target
+        asof = view_data.context.get("asof") or asof
+        weight_mode = view_data.context.get("weight_mode") or weight_mode
+        max_expiries = view_data.context.get("max_expiries") or max_expiries
+
     data = corr_df.to_numpy(dtype=float)
-    finite_count, total_elements, data_quality = _finite_cell_summary(corr_df)
+    if view_data is not None:
+        finite_count = view_data.finite_count
+        total_elements = view_data.total_cells
+        data_quality = view_data.finite_ratio
+    else:
+        finite_count, total_elements, data_quality = _finite_cell_summary(corr_df)
 
     if finite_count == 0:
         ax.text(
@@ -363,8 +282,8 @@ def plot_correlation_details(
         )
         return
 
-    coverage = _coverage_by_ticker(corr_df, atm_df)
-    overlap = _overlap_counts(corr_df, atm_df)
+    coverage = view_data.coverage if view_data is not None else _coverage_by_ticker(corr_df, atm_df)
+    overlap = view_data.overlap if view_data is not None else _overlap_counts(corr_df, atm_df)
     has_weights = bool(weights is not None and not weights.dropna().empty)
     has_coverage = bool(not coverage.empty)
     _, weight_ax, cov_ax = _reserve_correlation_layout(
@@ -380,7 +299,11 @@ def plot_correlation_details(
         if vals.size:
             min_overlap = int(np.nanmin(vals))
 
-    method_label, basis_label = _split_weight_mode(weight_mode)
+    if view_data is not None:
+        method_label = view_data.method_label
+        basis_label = view_data.basis_label
+    else:
+        method_label, basis_label = _split_weight_mode(weight_mode)
     max_exp_label = f"{int(max_expiries)}" if max_expiries else "available"
     context_parts = [f"ATM IV expiry ranks, first {max_exp_label} expiries"]
     context_parts.append(f"finite cells {finite_count}/{total_elements} ({data_quality:.0%})")

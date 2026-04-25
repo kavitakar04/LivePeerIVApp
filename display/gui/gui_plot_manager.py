@@ -14,8 +14,7 @@ if str(ROOT) not in sys.path:
 
 # Plot helpers
 from display.plotting.correlation_detail_plot import (
-    compute_and_plot_correlation,   # draws the corr heatmap
-    _corr_by_expiry_rank,
+    plot_correlation_details,
 )
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import (
@@ -34,6 +33,18 @@ from display.gui.gui_input import plot_id
 
 
 from analysis.cache_io import  WarmupWorker
+from analysis.correlation_view import corr_by_expiry_rank, prepare_correlation_view
+from analysis.settings import (
+    DEFAULT_ATM_BAND,
+    DEFAULT_CLIP_NEGATIVE_WEIGHTS,
+    DEFAULT_FEATURE_MODE,
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_MONEYNESS_BINS,
+    DEFAULT_WEIGHT_METHOD,
+    DEFAULT_WEIGHT_POWER,
+)
+from analysis.weight_view import resolve_peer_weights
+from analysis.explanations import get_explanation
 
 
 from analysis.model_params_logger import append_params
@@ -48,11 +59,6 @@ from analysis.confidence_bands import (
     tps_confidence_bands,
     
 )
-
-DEFAULT_ATM_BAND = 0.05
-DEFAULT_WEIGHT_METHOD = "corr"
-DEFAULT_FEATURE_MODE = "iv_atm"
-
 
 # ---------------------------------------------------------------------------
 # Small local helpers
@@ -159,6 +165,8 @@ class PlotManager:
         self.last_settings: dict = {}
         # store latest fit parameters for UI parameter tab
         self.last_fit_info: dict | None = None
+        # plain-English description of the current plot (read by the browser)
+        self.last_description: str = ""
 
         # cache for surface grids: key is (tickers tuple, max_expiries)
         self._surface_cache: dict[tuple[tuple[str, ...], int], dict] = {}
@@ -226,17 +234,18 @@ class PlotManager:
         """Clear any cached surface grids."""
         self._surface_cache.clear()
 
-    def _get_surface_grids(self, tickers, max_expiries):
+    def _get_surface_grids(self, tickers, max_expiries, mny_bins=None):
         """Return surface grids for ``tickers`` using cache if available."""
-        key = (tuple(sorted(set(tickers))), int(max_expiries))
+        bins_key = tuple(tuple(float(x) for x in b) for b in (mny_bins or DEFAULT_MONEYNESS_BINS))
+        key = (tuple(sorted(set(tickers))), int(max_expiries), bins_key)
         if key not in self._surface_cache:
-            payload = {"tickers": list(key[0]), "max_expiries": key[1]}
+            payload = {"tickers": list(key[0]), "max_expiries": key[1], "mny_bins": bins_key}
 
             def _builder():
                 return build_surface_grids(
                     tickers=list(key[0]),
                     tenors=None,
-                    mny_bins=None,
+                    mny_bins=bins_key,
                     use_atm_only=False,
                     max_expiries=key[1],
                 )
@@ -252,12 +261,15 @@ class PlotManager:
     def plot(self, ax: plt.Axes, settings: dict):
         plot_type = settings["plot_type"]
         target = settings["target"]
-        asof = settings["asof"]
+        # Normalize to plain YYYY-MM-DD so DB queries, surface dict lookups,
+        # and cache keys all use the same canonical form.
+        asof = pd.to_datetime(settings["asof"]).strftime("%Y-%m-%d")
         model = settings["model"]
         T_days = settings["T_days"]
         ci = settings["ci"]
         x_units = settings["x_units"]
         atm_band = settings.get("atm_band", DEFAULT_ATM_BAND)
+        mny_bins = settings.get("mny_bins", DEFAULT_MONEYNESS_BINS)
         weight_method = settings.get("weight_method", DEFAULT_WEIGHT_METHOD)
         feature_mode = settings.get("feature_mode", DEFAULT_FEATURE_MODE)
         # backward compatibility: allow legacy weight_mode field
@@ -277,13 +289,17 @@ class PlotManager:
         overlay_peers = settings.get("overlay_peers", False)
         peers = settings["peers"]
         pillars = settings["pillars"]
-        max_expiries = settings.get("max_expiries", 6)
+        max_expiries = settings.get("max_expiries", DEFAULT_MAX_EXPIRIES)
 
         # invalidate surface cache if tickers or max_expiries changed
         prev = getattr(self, "last_settings", {}) or {}
         prev_tickers = set([prev.get("target", "")] + prev.get("peers", []))
         curr_tickers = set([target] + peers)
-        if prev_tickers != curr_tickers or prev.get("max_expiries") != max_expiries:
+        if (
+            prev_tickers != curr_tickers
+            or prev.get("max_expiries") != max_expiries
+            or prev.get("mny_bins") != mny_bins
+        ):
             self.invalidate_surface_cache()
 
         # reset last-fit info before plotting
@@ -330,6 +346,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "overlay_peers": overlay_peers,
                 "max_expiries": max_expiries,
+                "v": 2,  # bump to invalidate caches missing cp_arr / expiry
             }
 
             def _builder():
@@ -504,6 +521,16 @@ class PlotManager:
             except Exception:
                 raw_scores = None
             plot_weights(ax, weights, raw_scores=raw_scores)
+
+            feature_label = weight_mode.replace("_", " ") if weight_mode else "IV correlation"
+            top_peer = weights.idxmax() if not weights.empty else "—"
+            self.last_description = (
+                f"Portfolio weights for the synthetic {target} ETF using {feature_label} features on {asof}. "
+                f"Each bar shows how much a peer contributes to the composite. "
+                f"Largest contributor: {top_peer} ({float(weights[top_peer]):.1%})."
+                if not weights.empty else
+                f"Portfolio weights for the synthetic {target} ETF using {feature_label} features on {asof}."
+            )
             return
 
         else:
@@ -542,91 +569,17 @@ class PlotManager:
 
     # -------------------- weights --------------------
     def _weights_from_ui_or_matrix(self, target: str, peers: list[str], weight_mode: str, asof=None, pillars=None):
-        """
-        Single source of truth for peer weights.
-
-        Tries multiple `compute_unified_weights` signatures for backward compat:
-        (target, peers, mode=..., asof=..., pillars_days=...)
-        (target, peers, mode=..., asof=..., pillar_days=...)
-        (target, peers, weight_mode=..., asof=..., pillar_days=...)
-        positional: (target, peers, mode, asof, pillar_days)
-
-        Fallbacks to relative weight matrix-derived weights (if cached meta matches) then equal weights.
-        """
-        import numpy as np
-        import pandas as pd
-        from analysis.correlation_utils import corr_weights
-
-        target = (target or "").upper()
-        peers = [p.upper() for p in (peers or [])]
-        pillars = pillars or [7, 30, 60, 90, 180, 365]
-        settings = getattr(self, "last_settings", {})
-
-        # 1) Unified weights with signature shims
-        try:
-            from analysis.unified_weights import compute_unified_weights
-
-            def _normalize(w: pd.Series) -> pd.Series | None:
-                if w is None or w.empty:
-                    return None
-                w = w.dropna().astype(float)
-                w = w[w.index.isin(peers)]
-                if w.empty or not np.isfinite(w.to_numpy(dtype=float)).any():
-                    return None
-                s = float(w.sum())
-                if s <= 0 or not np.isfinite(s):
-                    return None
-                return (w / s).reindex(peers).fillna(0.0).astype(float)
-
-            attempts = (
-                lambda: compute_unified_weights(target=target, peers=peers, mode=weight_mode, asof=asof, pillars_days=pillars),
-                lambda: compute_unified_weights(target=target, peers=peers, mode=weight_mode, asof=asof, pillar_days=pillars),
-                lambda: compute_unified_weights(target=target, peers=peers, weight_mode=weight_mode, asof=asof, pillar_days=pillars),
-                lambda: compute_unified_weights(target, peers, weight_mode, asof, pillars),
-            )
-            for fn in attempts:
-                try:
-                    uw = fn()
-                    nw = _normalize(uw)
-                    if nw is not None:
-                        return nw
-                except TypeError:
-                    # wrong signature for this branch; try the next attempt
-                    continue
-        except Exception as e:
-            print(f"Unified weight computation failed: {e}")
-
-        # 2) Correlation-matrix derived (only if cached meta matches exactly)
-        try:
-            if (
-                isinstance(self.last_corr_df, pd.DataFrame)
-                and not self.last_corr_df.empty
-                and self.last_corr_meta.get("weight_mode") == weight_mode
-                and self.last_corr_meta.get("clip_negative") == settings.get("clip_negative", True)
-                and self.last_corr_meta.get("weight_power") == settings.get("weight_power", 1.0)
-                and self.last_corr_meta.get("pillars", []) == list(pillars)
-                and self.last_corr_meta.get("asof") == asof
-                and set(self.last_corr_meta.get("tickers", [])) >= set([target] + peers)
-            ):
-                w = corr_weights(
-                    self.last_corr_df,
-                    target,
-                    peers,
-                    clip_negative=settings.get("clip_negative", True),
-                    power=settings.get("weight_power", 1.0),
-                )
-                if w is not None and not w.empty and np.isfinite(w.to_numpy(dtype=float)).any():
-                    w = w.dropna().astype(float)
-                    w = w[w.index.isin(peers)]
-                    s = float(w.sum())
-                    if s > 0 and np.isfinite(s):
-                        return (w / s).reindex(peers).fillna(0.0).astype(float)
-        except Exception:
-            pass
-
-        # 3) Equal weights fallback
-        eq = 1.0 / max(len(peers), 1)
-        return pd.Series(eq, index=peers, dtype=float)
+        """Resolve peer weights via analysis layer."""
+        return resolve_peer_weights(
+            target,
+            peers,
+            weight_mode,
+            asof=asof,
+            pillars=pillars,
+            settings=getattr(self, "last_settings", {}),
+            last_corr_df=self.last_corr_df,
+            last_corr_meta=self.last_corr_meta,
+        )
 
     # -------------------- specific plotters --------------------
     def _plot_smile(self, ax, df, target, asof, model, T_days, ci, overlay_synth, peers, weight_mode):
@@ -734,9 +687,7 @@ class PlotManager:
                     target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
                 )
                 tickers = list({target, *peers})
-                surfaces = build_surface_grids(
-                    tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries
-                )
+                surfaces = self._get_surface_grids(tickers, self._current_max_expiries, settings.get("mny_bins"))
 
                 tgt_grid = _value_for_asof(surfaces.get(target, {}), asof)
                 if tgt_grid is not None:
@@ -824,7 +775,7 @@ class PlotManager:
 
         try:
             tickers = list({target, *peers})
-            surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
+            surfaces = self._get_surface_grids(tickers, self._current_max_expiries, getattr(self, "last_settings", {}).get("mny_bins"))
 
             tgt_grid = _value_for_asof(surfaces.get(target, {}), asof)
             if tgt_grid is None:
@@ -858,7 +809,16 @@ class PlotManager:
             mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
             if mode_lbl == "corr":
                 mode_lbl = "relative weight matrix"
-            ax.set_title(f"{target} vs weighted synthetic surface | {asof} | {mode_lbl}", pad=12)
+            ax.set_title(f"{target} — IV Surface vs Synthetic Peer Composite | {asof}", pad=12)
+
+            # Description
+            self.last_description = (
+                f"Three-panel IV surface view for {target} on {asof}. "
+                f"Left: {target} implied vol surface. "
+                f"Middle: synthetic peer composite (weighted via {mode_lbl}). "
+                f"Right: spread (Target − Synthetic) — red = {target} priced richer than peers, "
+                f"blue = {target} cheaper than peers."
+            )
 
             panels = [
                 (target, tgt, "viridis"),
@@ -998,7 +958,7 @@ class PlotManager:
                 try:
                     weights = self._smile_ctx.get("weights")
                     tickers = [target] + (settings.get("peers") or [])
-                    surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
+                    surfaces = self._get_surface_grids(tickers, self._current_max_expiries, settings.get("mny_bins"))
                     if tgt_surface is None and target in surfaces:
                         tgt_surface = _value_for_asof(surfaces[target], asof)
                         self._smile_ctx["tgt_surface"] = tgt_surface
@@ -1153,7 +1113,55 @@ class PlotManager:
         if handles and labels:
             ax.legend(loc="best", fontsize=8)
         days = int(round(T0 * 365.25))
-        ax.set_title(f"{target}  {asof}  T≈{T0:.3f}y (~{days}d)  RMSE={info['rmse']:.4f}\n(Use buttons or click: L=next, R=prev)")
+
+        # Resolve expiry date and ATM stats for title
+        _sens: dict = {}
+        _expiry_str = ""
+        try:
+            _entry = fit_map.get(T0) or {}
+            if not _entry:
+                for _tk, _tv in fit_map.items():
+                    if abs(_tk - T0) < 1e-4:
+                        _entry = _tv or {}
+                        break
+            _sens = _entry.get("sens") or {}
+            _raw_exp = _entry.get("expiry") or ""
+            if _raw_exp:
+                # Keep only date portion (strip time if present)
+                _expiry_str = str(_raw_exp).split("T")[0].split(" ")[0]
+        except Exception:
+            pass
+
+        _atm_part = f"  ATM {float(_sens['atm_vol']):.1%}" if _sens.get("atm_vol") is not None else ""
+        _skew_part = f"  Skew {float(_sens['skew']):+.3f}" if _sens.get("skew") is not None else ""
+
+        _title_exp = f"expires {_expiry_str}" if _expiry_str else f"{days}d to expiry"
+        _total_exp = len(Ts)
+        _exp_num = i + 1
+
+        ax.set_title(
+            f"{target}  ·  {_title_exp}  ({days}d)  [{_exp_num}/{_total_exp}]"
+            f"{_atm_part}{_skew_part}  RMSE {info['rmse']:.4f}\n"
+            "← Prev / Next Expiry  or click plot (left=next, right=prev)"
+        )
+
+        # Update plain-English description for the browser bar
+        _feature_mode = settings.get("feature_mode", "iv_atm")
+        _weight_method = settings.get("weight_method", "corr")
+        _base_expl = get_explanation(
+            "smile",
+            feature_mode=_feature_mode,
+            weight_method=_weight_method,
+            overlay_synth=bool(settings.get("overlay_synth")),
+            overlay_peers=bool(settings.get("overlay_peers")),
+        )
+        self.last_description = (
+            f"{target} · expiry {_expiry_str or f'{days}d'} [{_exp_num}/{_total_exp}] | {asof}"
+            + (f"  ATM {float(_sens['atm_vol']):.1%}" if _sens.get("atm_vol") is not None else "")
+            + (f"  Skew {float(_sens['skew']):+.3f}" if _sens.get("skew") is not None else "")
+            + f"  RMSE {info['rmse']:.4f}"
+            + f"\n{_base_expl}"
+        )
         
         # Ensure canvas and figure are valid before drawing
         if self.canvas is not None and ax.figure is not None:
@@ -1186,16 +1194,46 @@ class PlotManager:
     def _plot_term(self, ax, data, target, asof, x_units, ci, *, overlay_peers: bool = False, overlay_synth: bool = True):
         """Plot precomputed ATM term structure and optional synthetic overlay."""
         atm_curve = data.get("atm_curve")
-        title = f"{target}  {asof}  ATM Term Structure  (N={len(atm_curve)})"
+        n_exp = len(atm_curve)
+        title = f"{target} — ATM Implied Volatility Term Structure | {asof} | {n_exp} expiries"
         peer_curves = data.get("peer_curves") or {}
         weights = data.get("weights")
         synth_curve = data.get("synth_curve") if overlay_synth else None
 
+        # Build plain-English description
+        try:
+            _vols = atm_curve["atm_vol"].dropna() if "atm_vol" in atm_curve.columns else pd.Series(dtype=float)
+            if len(_vols) >= 2:
+                _near, _far = float(_vols.iloc[0]), float(_vols.iloc[-1])
+                if _far > _near * 1.02:
+                    _shape = "upward-sloping (contango) — near-term vol is lower than longer-dated vol"
+                elif _near > _far * 1.02:
+                    _shape = "downward-sloping (backwardation) — near-term stress is elevated relative to longer maturities"
+                else:
+                    _shape = "roughly flat"
+                _desc_stats = f"  Near-term ATM: {_near:.1%} | Far-term ATM: {_far:.1%}."
+            else:
+                _shape = "unknown"
+                _desc_stats = ""
+        except Exception:
+            _shape = "unknown"
+            _desc_stats = ""
+
+        _last = getattr(self, "last_settings", {}) or {}
+        _term_expl = get_explanation(
+            "term",
+            feature_mode=_last.get("feature_mode", "iv_atm"),
+            weight_method=_last.get("weight_method", "corr"),
+            overlay_synth=overlay_synth,
+            overlay_peers=overlay_peers,
+        )
+        self.last_description = (
+            f"{target} ATM term structure | {asof} | {n_exp} expiries | {_shape}{_desc_stats}"
+            + (f"  Peers: {', '.join(peer_curves.keys())}." if peer_curves and overlay_peers else "")
+            + f"\n{_term_expl}"
+        )
+
         if peer_curves or (synth_curve is not None and not synth_curve.empty):
-            if peer_curves:
-                title += f" | peers={len(peer_curves)}"
-            if synth_curve is not None and not synth_curve.empty:
-                title += f" | synthetic N={len(synth_curve)}"
             plot_term_structure_comparison(
                 ax,
                 atm_curve,
@@ -1226,7 +1264,7 @@ class PlotManager:
         peers,
         asof,
         pillars,
-        weight_mode,  # passed through to compute_and_plot_correlation
+        weight_mode,
         atm_band,
     ):
         tickers = [t for t in [target] + peers if t]
@@ -1235,10 +1273,10 @@ class PlotManager:
             return
 
         settings = getattr(self, "last_settings", {})
-        weight_power = settings.get("weight_power", 1.0)
-        clip_negative = settings.get("clip_negative", True)
+        weight_power = settings.get("weight_power", DEFAULT_WEIGHT_POWER)
+        clip_negative = settings.get("clip_negative", DEFAULT_CLIP_NEGATIVE_WEIGHTS)
 
-        max_exp = self._current_max_expiries or 6
+        max_exp = self._current_max_expiries or DEFAULT_MAX_EXPIRIES
 
         payload = {
             "tickers": sorted(tickers),
@@ -1248,7 +1286,7 @@ class PlotManager:
         }
 
         def _builder():
-            return _corr_by_expiry_rank(
+            return corr_by_expiry_rank(
                 get_slice=self.get_smile_slice,
                 tickers=tickers,
                 asof=asof,
@@ -1262,8 +1300,7 @@ class PlotManager:
             except Exception:
                 pass
 
-        atm_df, corr_df, _ = compute_and_plot_correlation(
-            ax=ax,
+        view = prepare_correlation_view(
             get_smile_slice=self.get_smile_slice,
             tickers=tickers,
             asof=asof,
@@ -1276,10 +1313,17 @@ class PlotManager:
             max_expiries=max_exp,
             weight_mode=weight_mode,
         )
+        plot_correlation_details(
+            ax,
+            view.corr_df,
+            weights=view.weights,
+            show_values=True,
+            view_data=view,
+        )
 
         # cache for other plots
-        self.last_corr_df = corr_df
-        self.last_atm_df = atm_df
+        self.last_corr_df = view.corr_df
+        self.last_atm_df = view.atm_df
         self.last_corr_meta = {
             "asof": asof,
             "tickers": list(tickers),
@@ -1288,6 +1332,16 @@ class PlotManager:
             "weight_power": weight_power,
             "clip_negative": clip_negative,
         }
+
+        # Plain-English description
+        feature_label = weight_mode.replace("_", " ") if weight_mode else "IV"
+        peer_list = ", ".join(peers) if peers else "none"
+        self.last_description = (
+            f"IV similarity matrix for {target} vs peers ({peer_list}) on {asof}, "
+            f"computed using {feature_label} features. "
+            f"Brighter squares = more correlated vol dynamics. "
+            f"Right panel shows the resulting portfolio weights for a synthetic {target} ETF."
+        )
 
     # -------------------- synthetic ATM helper --------------------
     # -------------------- animation control --------------------
@@ -1481,7 +1535,8 @@ class PlotManager:
                 # Build grids (no asof_dates arg to keep compatibility)
                 surfaces = build_surface_grids(
                     tickers=[target] + (peers or []),
-                    max_expiries=settings.get("max_expiries", 6),
+                    max_expiries=settings.get("max_expiries", DEFAULT_MAX_EXPIRIES),
+                    mny_bins=settings.get("mny_bins", DEFAULT_MONEYNESS_BINS),
                     use_atm_only=False,
                 )
                 if target in surfaces and date in surfaces[target]:

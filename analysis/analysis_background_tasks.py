@@ -8,15 +8,22 @@ from typing import Iterable, List, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 
-HORIZONS = (0, 1, 3, 5, 10)
-WINDOW_DAYS = 90
+from analysis.settings import (
+    DEFAULT_BACKGROUND_MIN_SAMPLES,
+    DEFAULT_BACKGROUND_RECOMPUTE_TAIL_DAYS,
+    DEFAULT_BACKGROUND_SPILLOVER_HORIZONS,
+    DEFAULT_BACKGROUND_WINDOW_DAYS,
+)
+
+HORIZONS = DEFAULT_BACKGROUND_SPILLOVER_HORIZONS
+WINDOW_DAYS = DEFAULT_BACKGROUND_WINDOW_DAYS
 
 @dataclass(frozen=True)
 class SpilloverConfig:
     db_path: str = "data/iv_data.db"
     horizons: Tuple[int, ...] = HORIZONS
-    recompute_tail_days: int = 7   # stability: recompute recent days
-    min_samples: int = 20          # skip very short spans
+    recompute_tail_days: int = DEFAULT_BACKGROUND_RECOMPUTE_TAIL_DAYS
+    min_samples: int = DEFAULT_BACKGROUND_MIN_SAMPLES
 
 def _today() -> date:
     return datetime.utcnow().date()

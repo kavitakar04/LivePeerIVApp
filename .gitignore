@@ -36,8 +36,12 @@ ENV/
 *~
 
 # Database files
+*.db
 *.db-shm
 *.db-wal
+
+# AI agent working directories
+.claude/
 
 # Cache and temporary files
 .cache/

@@ -18,6 +18,14 @@ from analysis.unified_weights import (
 
 from analysis.pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 from analysis.correlation_utils import compute_atm_corr_pillar_free
+from analysis.settings import (
+    DEFAULT_MONEYNESS_BINS,
+    DEFAULT_PILLAR_DAYS,
+    DEFAULT_SURFACE_TENORS,
+    DEFAULT_WEIGHT_ATM_BAND,
+    DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS,
+    DEFAULT_WEIGHT_POWER,
+)
 
 
 # =========================
@@ -74,8 +82,8 @@ def atm_feature_matrix(
     tickers: Iterable[str],
     asof: str,
     pillars_days: Iterable[int],
-    atm_band: float = 0.08,
-    tol_days: float = 10.0,
+    atm_band: float = DEFAULT_WEIGHT_ATM_BAND,
+    tol_days: float = DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS,
     standardize: bool = True,
 ) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
     """Rows=tickers, cols=pillars. Delegates to unified_weights."""
@@ -115,7 +123,7 @@ def pca_weights(
     target: str,
     peers: List[str],
     asof: str,
-    pillars_days: Iterable[int] = (7, 30, 60, 90, 180, 365),
+    pillars_days: Iterable[int] = DEFAULT_PILLAR_DAYS,
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     k: Optional[int] = None,
@@ -268,7 +276,7 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     mean_corr = corr_matrix.mean(axis=1).dropna()
 
     out: Dict[int, pd.Series] = {}
-    base_pillars = [7, 30, 60, 90] if not pillar_days else list(pillar_days)
+    base_pillars = list(DEFAULT_PILLAR_DAYS[:4]) if not pillar_days else list(pillar_days)
     for d in base_pillars:
         noise = 1.0 + (int(d) - 30) * 0.001
         out[int(d)] = (mean_corr * noise).rename(f"iv_atm_beta_{int(d)}d")
@@ -277,8 +285,8 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
 
 def surface_betas(
     benchmark: str,
-    tenors: Iterable[int] = (7, 30, 60, 90, 180, 365),
-    mny_bins: Iterable[Tuple[float, float]] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+    tenors: Iterable[int] = DEFAULT_SURFACE_TENORS,
+    mny_bins: Iterable[Tuple[float, float]] = DEFAULT_MONEYNESS_BINS,
     conn_fn=None,
 ) -> pd.Series:
     """Cheap scalar beta: average grid IV per (date,ticker), then beta vs benchmark."""
@@ -325,8 +333,8 @@ def surface_betas(
 
 def iv_surface_betas(
     benchmark: str,
-    tenors: Iterable[int] = (7, 30, 60, 90, 180, 365),
-    mny_bins: Iterable[Tuple[float, float]] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+    tenors: Iterable[int] = DEFAULT_SURFACE_TENORS,
+    mny_bins: Iterable[Tuple[float, float]] = DEFAULT_MONEYNESS_BINS,
     conn_fn=None,
 ) -> Dict[str, pd.Series]:
     """
@@ -412,14 +420,14 @@ def build_vol_betas(
     if mode == "surface":
         return surface_betas(
             benchmark.upper(),
-            tenors=tenor_days or (7, 30, 60, 90, 180, 365),
-            mny_bins=mny_bins or ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+            tenors=tenor_days or DEFAULT_SURFACE_TENORS,
+            mny_bins=mny_bins or DEFAULT_MONEYNESS_BINS,
         )
     if mode == "surface_grid":
         return iv_surface_betas(
             benchmark.upper(),
-            tenors=tenor_days or (7, 30, 60, 90, 180, 365),
-            mny_bins=mny_bins or ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25)),
+            tenors=tenor_days or DEFAULT_SURFACE_TENORS,
+            mny_bins=mny_bins or DEFAULT_MONEYNESS_BINS,
         )
     raise ValueError(f"unknown beta mode: {mode}")
 
@@ -546,13 +554,13 @@ def build_peer_weights(
     *,
     get_smile_slice=None,
     asof: str | None = None,
-    pillars_days: Iterable[int] = (7, 30, 60, 90, 180, 365),
+    pillars_days: Iterable[int] = DEFAULT_PILLAR_DAYS,
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     window: int = 21,
     min_obs: int = 10,
     clip_negative: bool = True,
-    power: float = 1.0,
+    power: float = DEFAULT_WEIGHT_POWER,
     k: Optional[int] = None,
 ) -> pd.Series:
     """

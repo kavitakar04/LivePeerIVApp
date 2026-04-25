@@ -6,7 +6,12 @@ import matplotlib.pyplot as plt
 from typing import Optional, Dict, Mapping
 
 from analysis.confidence_bands import Bands
-from volModel.termFit import fit_term_structure, term_structure_iv
+from analysis.term_view import (
+    compute_term_fit_curve,
+    compute_term_spread_curve,
+    term_ci_error,
+    term_x_values,
+)
 
 
 def plot_atm_term_structure(
@@ -21,7 +26,7 @@ def plot_atm_term_structure(
         ax.text(0.5, 0.5, "No ATM data", ha="center", va="center")
         return
 
-    x = atm_df["T"].to_numpy(float)
+    x = pd.to_numeric(atm_df["T"], errors="coerce").to_numpy(float)
     y = atm_df["atm_vol"].to_numpy(float)
 
     if x_units == "days":
@@ -31,26 +36,16 @@ def plot_atm_term_structure(
         x_plot = x
         x_label = "Time to Expiry (years)"
 
-    if show_ci and {"atm_lo","atm_hi"}.issubset(atm_df.columns):
-        y_lo = atm_df["atm_lo"].to_numpy(float)
-        y_hi = atm_df["atm_hi"].to_numpy(float)
-        if np.isfinite(y_lo).any() and np.isfinite(y_hi).any():
-            yerr = np.vstack([np.clip(y - y_lo, 0, None), np.clip(y_hi - y, 0, None)])
-            ax.errorbar(x_plot, y, yerr=yerr, fmt="o", ms=4.5, capsize=3, alpha=0.9, label="ATM (fit) ± CI")
-        else:
-            ax.scatter(x_plot, y, s=30, alpha=0.9, label="ATM (fit)")
+    yerr = term_ci_error(atm_df) if show_ci else None
+    if yerr is not None:
+        ax.errorbar(x_plot, y, yerr=yerr, fmt="o", ms=4.5, capsize=3, alpha=0.9, label="ATM (fit) ± CI")
     else:
         ax.scatter(x_plot, y, s=30, alpha=0.9, label="ATM (fit)")
 
-    if fit and len(x) > degree:
-        try:
-            params = fit_term_structure(x, y, degree=degree)
-            grid = np.linspace(x.min(), x.max(), 200)
-            fit_y = term_structure_iv(grid, params)
-            grid_plot = grid * 365.25 if x_units == "days" else grid
+    if fit:
+        grid_plot, fit_y = compute_term_fit_curve(atm_df, x_units=x_units, degree=degree)
+        if grid_plot.size and fit_y.size:
             ax.plot(grid_plot, fit_y, linestyle="--", alpha=0.6, label="Term fit")
-        except Exception:
-            pass
 
     ax.set_xlabel(x_label)
     ax.set_ylabel("Implied Vol (ATM)")
@@ -102,17 +97,13 @@ def plot_term_structure_comparison(
         show_ci=show_ci,
     )
 
-    def _xvals(df: pd.DataFrame) -> np.ndarray:
-        x = pd.to_numeric(df["T"], errors="coerce").to_numpy(float)
-        return x * 365.25 if x_units == "days" else x
-
     peer_curves = dict(peer_curves or {})
     if peer_curves:
         weight_map = pd.Series(weights, dtype=float) if weights is not None and len(weights) else pd.Series(dtype=float)
         for peer, curve in peer_curves.items():
             if curve is None or curve.empty or not {"T", "atm_vol"}.issubset(curve.columns):
                 continue
-            x = _xvals(curve)
+            x = term_x_values(curve, x_units=x_units)
             y = pd.to_numeric(curve["atm_vol"], errors="coerce").to_numpy(float)
             mask = np.isfinite(x) & np.isfinite(y)
             if not mask.any():
@@ -122,7 +113,7 @@ def plot_term_structure_comparison(
             ax.plot(x[mask], y[mask], lw=1.0, alpha=0.45, label=label)
 
     if synth_curve is not None and not synth_curve.empty and {"T", "atm_vol"}.issubset(synth_curve.columns):
-        x_syn = _xvals(synth_curve)
+        x_syn = term_x_values(synth_curve, x_units=x_units)
         y_syn = pd.to_numeric(synth_curve["atm_vol"], errors="coerce").to_numpy(float)
         mask_syn = np.isfinite(x_syn) & np.isfinite(y_syn)
         if mask_syn.any():
@@ -143,23 +134,14 @@ def plot_term_structure_comparison(
 
             if atm_df is not None and not atm_df.empty:
                 try:
-                    x_tgt = _xvals(atm_df)
-                    y_tgt = pd.to_numeric(atm_df["atm_vol"], errors="coerce").to_numpy(float)
-                    valid_tgt = np.isfinite(x_tgt) & np.isfinite(y_tgt)
-                    valid_syn = np.isfinite(x_syn) & np.isfinite(y_syn)
-                    if valid_tgt.sum() >= 2 and valid_syn.sum() >= 2:
-                        lo_x = max(float(np.nanmin(x_tgt[valid_tgt])), float(np.nanmin(x_syn[valid_syn])))
-                        hi_x = min(float(np.nanmax(x_tgt[valid_tgt])), float(np.nanmax(x_syn[valid_syn])))
-                        if hi_x > lo_x:
-                            grid = np.linspace(lo_x, hi_x, 80)
-                            tgt_i = np.interp(grid, x_tgt[valid_tgt], y_tgt[valid_tgt])
-                            syn_i = np.interp(grid, x_syn[valid_syn], y_syn[valid_syn])
-                            inset = ax.inset_axes([0.10, 0.07, 0.86, 0.24])
-                            inset.plot(grid, tgt_i - syn_i, color="tab:red", lw=1.2)
-                            inset.axhline(0.0, color="black", lw=0.7, alpha=0.6)
-                            inset.set_ylabel("Tgt-Syn", fontsize=8)
-                            inset.tick_params(labelsize=7)
-                            inset.grid(True, alpha=0.2)
+                    grid, spread = compute_term_spread_curve(atm_df, synth_curve, x_units=x_units)
+                    if grid.size and spread.size:
+                        inset = ax.inset_axes([0.10, 0.07, 0.86, 0.24])
+                        inset.plot(grid, spread, color="tab:red", lw=1.2)
+                        inset.axhline(0.0, color="black", lw=0.7, alpha=0.6)
+                        inset.set_ylabel("Tgt-Syn", fontsize=8)
+                        inset.tick_params(labelsize=7)
+                        inset.grid(True, alpha=0.2)
                 except Exception:
                     pass
 

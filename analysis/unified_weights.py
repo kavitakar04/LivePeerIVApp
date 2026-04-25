@@ -26,6 +26,14 @@ import pandas as pd
 # Delayed imports to avoid circular dependencies
 # from analysis.analysis_pipeline import get_smile_slice, available_dates
 from analysis.pillars import build_atm_matrix, DEFAULT_PILLARS_DAYS
+from analysis.settings import (
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_MONEYNESS_BINS,
+    DEFAULT_ATM_BAND,
+    DEFAULT_SURFACE_TENORS,
+    DEFAULT_WEIGHT_ATM_BAND,
+    DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS,
+)
 # from analysis.syntheticETFBuilder import build_surface_grids
 # from analysis.correlation_utils import compute_atm_corr_pillar_free
 
@@ -64,14 +72,14 @@ class WeightConfig:
     method: WeightMethod
     feature_set: FeatureSet
     pillars_days: Tuple[int, ...] = tuple(DEFAULT_PILLARS_DAYS)
-    tenors: Tuple[int, ...] = (7, 30, 60, 90, 180, 365)
-    mny_bins: Tuple[Tuple[float, float], ...] = ((0.8, 0.9), (0.95, 1.05), (1.1, 1.25))
+    tenors: Tuple[int, ...] = DEFAULT_SURFACE_TENORS
+    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MONEYNESS_BINS
     clip_negative: bool = True
     power: float = 1.0
     asof: Optional[str] = None
-    atm_band: float = 0.08
-    atm_tol_days: float = 10.0
-    max_expiries: int = 6
+    atm_band: float = DEFAULT_WEIGHT_ATM_BAND
+    atm_tol_days: float = DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS
+    max_expiries: int = DEFAULT_MAX_EXPIRIES
 
     @classmethod
     def from_mode(cls, mode: str, **kwargs) -> "WeightConfig":
@@ -117,20 +125,25 @@ def atm_feature_matrix(
     asof: str,
     pillars_days: Iterable[int],
     *,
-    atm_band: float = 0.08,
-    tol_days: float = 10.0,
+    atm_band: float = DEFAULT_WEIGHT_ATM_BAND,
+    tol_days: float = DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS,
     standardize: bool = True,
 ) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
     """Rows=tickers, cols=pillars (days). Values=ATM IVs for a single as-of date."""
-    from analysis.analysis_pipeline import get_smile_slice  # Delayed import
-    
+    from analysis.analysis_pipeline import get_smile_slice, get_smile_slices_batch
+
+    tickers_up = [t.upper() for t in tickers]
+    # One DB round-trip for all tickers; slices passed into build_atm_matrix
+    slices = get_smile_slices_batch(tickers_up, asof)
+
     atm_df, _ = build_atm_matrix(
         get_smile_slice=get_smile_slice,
-        tickers=[t.upper() for t in tickers],
+        tickers=tickers_up,
         asof=asof,
         pillars_days=pillars_days,
         atm_band=atm_band,
         tol_days=tol_days,
+        slices=slices,
     )
     X = _impute_col_median(atm_df.to_numpy(dtype=float))
     if standardize:
@@ -141,9 +154,9 @@ def atm_feature_matrix(
 def _atm_rank_feature_matrix(
     tickers: Iterable[str],
     asof: str,
-    max_expiries: int = 6,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
     *,
-    atm_band: float = 0.05,
+    atm_band: float = DEFAULT_ATM_BAND,
 ) -> tuple[pd.DataFrame, list[int]]:
     """Build expiry-rank ATM feature matrix (rows=tickers, cols=ranks)."""
     from analysis.analysis_pipeline import get_smile_slice  # delayed import
@@ -171,18 +184,21 @@ def surface_feature_matrix(
     standardize: bool = True,
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
     """Rows=tickers, cols=flattened (tenor × moneyness) grid for a single as-of date."""
-    from analysis.syntheticETFBuilder import build_surface_grids  # Delayed import
+    # Route through the LRU-cached builder so repeated calls on same tickers/date
+    # skip the full DB query.
+    from analysis.analysis_pipeline import PipelineConfig, get_surface_grids_cached
+    from analysis.syntheticETFBuilder import DEFAULT_TENORS, DEFAULT_MNY_BINS
 
-    # build_surface_grids keys dates as pd.Timestamp; normalise asof to match.
     asof_ts = pd.Timestamp(asof).normalize()
     req = [t.upper() for t in tickers]
-    logger.debug("Building surface grids for %s on %s", req, asof_ts)
-    grids = build_surface_grids(
-        tickers=req,
-        tenors=tenors,
-        mny_bins=mny_bins,
-        use_atm_only=False,
-    )
+
+    _tenors = tuple(int(t) for t in tenors) if tenors else DEFAULT_TENORS
+    _mny_bins = tuple(tuple(b) for b in mny_bins) if mny_bins else DEFAULT_MNY_BINS
+    cfg = PipelineConfig(tenors=_tenors, mny_bins=_mny_bins)
+    key = ",".join(sorted(req))
+
+    logger.debug("Building surface grids (cached) for %s on %s", req, asof_ts)
+    grids = get_surface_grids_cached(cfg, key)
     if not grids:
         logger.debug("No surface grids returned for %s on %s", req, asof_ts)
 

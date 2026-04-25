@@ -59,6 +59,14 @@ from volModel.sviFit import fit_svi_slice
 from volModel.sabrFit import fit_sabr_slice
 from .model_params_logger import append_params, load_model_params
 from .confidence_bands import synthetic_etf_pillar_bands
+from .settings import (
+    DEFAULT_ATM_BAND,
+    DEFAULT_CI,
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_PILLAR_DAYS,
+    DEFAULT_PILLAR_TOLERANCE_DAYS,
+    DEFAULT_RV_LOOKBACK_DAYS,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -100,7 +108,7 @@ class PipelineConfig:
 # -----------------------------------------------------------------------------
 def ingest_and_process(
     tickers: Iterable[str],
-    max_expiries: int = 6,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
     r: float = STANDARD_RISK_FREE_RATE,
     q: float = STANDARD_DIVIDEND_YIELD,
 ) -> int:
@@ -200,7 +208,7 @@ def build_synthetic_surface(
 def build_synthetic_iv_series(
     weights: Mapping[str, float],
     pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
-    tolerance_days: float = 7.0,
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
 ) -> pd.DataFrame:
     """Create a weighted ATM pillar IV time series."""
     w = {k.upper(): float(v) for k, v in weights.items()}
@@ -266,7 +274,7 @@ def build_synthetic_iv_series_corrweighted(
     peers: Iterable[str],
     weight_mode: str = "corr_iv_atm",
     pillar_days: Union[int, Iterable[int]] = DEFAULT_PILLARS_DAYS,
-    tolerance_days: float = 7.0,
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     asof: str | None = None,
 ) -> Tuple[pd.DataFrame, pd.Series]:
     """Build correlation/PCA-weighted synthetic ATM pillar IV series."""
@@ -324,7 +332,7 @@ def save_betas(
 def _fetch_target_atm(
     target: str,
     pillar_days: Iterable[int],
-    tolerance_days: float = 7.0
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
 ) -> pd.DataFrame:
     atm = load_atm()
     atm = atm[atm["ticker"] == target].copy()
@@ -335,7 +343,7 @@ def _fetch_target_atm(
     return out[["asof_date", "pillar_days", "iv"]]
 
 
-def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: int = 60) -> pd.DataFrame:
+def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: int = DEFAULT_RV_LOOKBACK_DAYS) -> pd.DataFrame:
     tgt = target_iv.rename(columns={"iv": "iv_target"})
     syn = synth_iv.rename(columns={"iv": "iv_synth"})
     df = pd.merge(tgt, syn, on=["asof_date", "pillar_days"], how="inner").sort_values(["pillar_days", "asof_date"])
@@ -363,8 +371,8 @@ def relative_value_atm_report_corrweighted(
     peers: Iterable[str] | None = None,
     mode: str = "iv_atm",                # 'ul' | 'iv_atm' | 'surface'  (weights source)
     pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
-    lookback: int = 60,
-    tolerance_days: float = 7.0,
+    lookback: int = DEFAULT_RV_LOOKBACK_DAYS,
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     weight_power: float = 1.0,
     clip_negative: bool = True,
 ) -> tuple[pd.DataFrame, pd.Series]:
@@ -396,9 +404,9 @@ def latest_relative_snapshot_corrweighted(
     target: str,
     peers: Iterable[str] | None = None,
     mode: str = "iv_atm",
-    pillar_days: Iterable[int] = (7, 30, 60, 90),
-    lookback: int = 60,
-    tolerance_days: float = 7.0,
+    pillar_days: Iterable[int] = DEFAULT_PILLAR_DAYS,
+    lookback: int = DEFAULT_RV_LOOKBACK_DAYS,
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     **kwargs,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """
@@ -642,17 +650,72 @@ def get_smile_slice(
     return df.sort_values(["call_put", "T", "moneyness", "K"]).reset_index(drop=True)
 
 
+def get_smile_slices_batch(
+    tickers: list[str],
+    asof_date: str,
+    max_expiries: Optional[int] = None,
+    call_put: Optional[str] = None,
+) -> dict[str, pd.DataFrame]:
+    """Load ALL tickers' option quotes for one date in a single SQL query.
+
+    Replaces N calls to get_smile_slice with one round-trip.  The returned dict
+    maps upper-cased ticker → filtered DataFrame (same schema as get_smile_slice).
+    Missing or empty tickers map to an empty DataFrame.
+    """
+    tickers_up = [t.upper() for t in tickers]
+    if not tickers_up or not asof_date:
+        return {t: pd.DataFrame() for t in tickers_up}
+
+    conn = get_conn()
+    ph = ",".join("?" * len(tickers_up))
+    q = f"""
+        SELECT asof_date, ticker, expiry, call_put, strike AS K, spot AS S, ttm_years AS T,
+               moneyness, iv AS sigma, delta, is_atm
+        FROM options_quotes
+        WHERE asof_date = ? AND ticker IN ({ph})
+    """
+    df = pd.read_sql_query(q, conn, params=[asof_date] + tickers_up)
+    conn.close()
+
+    if not df.empty:
+        df = filter_quotes(
+            df,
+            min_moneyness=ANALYTICS_MIN_MONEYNESS,
+            max_moneyness=ANALYTICS_MAX_MONEYNESS,
+            require_uncrossed=True,
+        )
+
+    result: dict[str, pd.DataFrame] = {}
+    for t in tickers_up:
+        if df.empty:
+            result[t] = pd.DataFrame()
+            continue
+        tdf = df[df["ticker"] == t].copy()
+        if tdf.empty:
+            result[t] = pd.DataFrame()
+            continue
+        if call_put in ("C", "P"):
+            tdf = tdf[tdf["call_put"] == call_put]
+        if max_expiries is not None and max_expiries > 0 and not tdf.empty:
+            unique_expiries = tdf.groupby("expiry")["T"].first().sort_values()
+            limited_expiries = unique_expiries.head(max_expiries).index.tolist()
+            tdf = tdf[tdf["expiry"].isin(limited_expiries)]
+        result[t] = tdf.sort_values(["call_put", "T", "moneyness", "K"]).reset_index(drop=True)
+
+    return result
+
+
 def prepare_smile_data(
     target: str,
     asof: str,
     T_days: float,
     model: str = "svi",
-    ci: float = 68.0,
+    ci: float = DEFAULT_CI * 100.0,
     overlay_synth: bool = False,
     peers: Iterable[str] | None = None,
     weights: Optional[Mapping[str, float]] = None,
     overlay_peers: bool = False,
-    max_expiries: int = 6,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
 ) -> Dict[str, Any]:
     """Precompute smile data and fitted parameters for plotting.
 
@@ -847,12 +910,12 @@ def prepare_smile_data(
 def prepare_term_data(
     target: str,
     asof: str,
-    ci: float = 68.0,
+    ci: float = DEFAULT_CI * 100.0,
     overlay_synth: bool = False,
     peers: Iterable[str] | None = None,
     weights: Optional[Mapping[str, float]] = None,
-    atm_band: float = 0.05,
-    max_expiries: int = 6,
+    atm_band: float = DEFAULT_ATM_BAND,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
 ) -> Dict[str, Any]:
     """Precompute ATM term structure and synthetic overlay data.
 

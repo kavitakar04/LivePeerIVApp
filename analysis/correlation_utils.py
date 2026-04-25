@@ -4,6 +4,13 @@ from typing import Iterable, List, Optional, Tuple
 from dataclasses import dataclass
 
 from .pillars import build_atm_matrix, detect_available_pillars, EXTENDED_PILLARS_DAYS
+from .settings import (
+    DEFAULT_ATM_BAND,
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_PILLAR_DAYS,
+    DEFAULT_PILLAR_TOLERANCE_DAYS,
+    DEFAULT_WEIGHT_POWER,
+)
 
 
 @dataclass
@@ -22,17 +29,17 @@ class PillarConfig:
     min_tickers_per_pillar: int = 3
     
     # Tolerance for pillar matching
-    tol_days: float = 7.0
+    tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
     
     def __post_init__(self):
         if self.base_pillars is None:
-            self.base_pillars = [7, 30, 60, 90]  # Default pillars
+            self.base_pillars = list(DEFAULT_PILLAR_DAYS[:4])
     
     @classmethod
     def restricted(cls, pillars: List[int] = None) -> 'PillarConfig':
         """Create a restricted pillar configuration."""
         return cls(
-            base_pillars=pillars or [7, 30, 60, 90],
+            base_pillars=pillars or list(DEFAULT_PILLAR_DAYS[:4]),
             use_restricted_pillars=True,
             optimize_pillars=False,
         )
@@ -41,7 +48,7 @@ class PillarConfig:
     def optimized(cls, base_pillars: List[int] = None, max_pillars: int = 8) -> 'PillarConfig':
         """Create an optimized pillar configuration."""
         return cls(
-            base_pillars=base_pillars or [7, 30, 60, 90],
+            base_pillars=base_pillars or list(DEFAULT_PILLAR_DAYS[:4]),
             use_restricted_pillars=False,
             optimize_pillars=True,
             max_pillars=max_pillars,
@@ -51,7 +58,7 @@ class PillarConfig:
     def extended(cls, base_pillars: List[int] = None, max_pillars: int = 10) -> 'PillarConfig':
         """Create an extended pillar configuration without optimization."""
         return cls(
-            base_pillars=base_pillars or [7, 30, 60, 90],
+            base_pillars=base_pillars or list(DEFAULT_PILLAR_DAYS[:4]),
             use_restricted_pillars=False,
             optimize_pillars=False,
             max_pillars=max_pillars,
@@ -63,8 +70,8 @@ def compute_atm_corr(
     tickers: Iterable[str],
     asof: str,
     pillars_days: Iterable[int],
-    atm_band: float = 0.05,
-    tol_days: float = 7.0,
+    atm_band: float = DEFAULT_ATM_BAND,
+    tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     min_pillars: int = 2,
     demean_rows: bool = False,
     corr_method: str = "pearson",
@@ -166,7 +173,7 @@ def compute_atm_corr_optimized(
     get_smile_slice,
     tickers: Iterable[str],
     asof: str,
-    base_pillars_days: Iterable[int] = (7, 30, 60, 90),
+    base_pillars_days: Iterable[int] = DEFAULT_PILLAR_DAYS[:4],
     **kwargs,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[int]]:
     """
@@ -275,7 +282,7 @@ def corr_weights(
     target: str,
     peers: List[str],
     clip_negative: bool = True,
-    power: float = 1.0,
+    power: float = DEFAULT_WEIGHT_POWER,
 ) -> pd.Series:
     """Convert correlations with target into normalised positive weights on peers."""
     target = target.upper()
@@ -328,7 +335,7 @@ def flexible_weights(
     peers: List[str],
     weight_mode: str = "auto",
     clip_negative: bool = True,
-    power: float = 1.0,
+    power: float = DEFAULT_WEIGHT_POWER,
     min_weight_threshold: float = 0.01,
 ) -> pd.Series:
     """
@@ -427,8 +434,8 @@ def compute_atm_corr_pillar_free(
     get_smile_slice,
     tickers: Iterable[str],
     asof: str,
-    max_expiries: int = 6,
-    atm_band: float = 0.05,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
+    atm_band: float = DEFAULT_ATM_BAND,
     min_tickers: int = 2,
     corr_method: str = "pearson",
     min_periods: int = 2,
@@ -470,79 +477,18 @@ def compute_atm_corr_pillar_free(
     corr_df : pd.DataFrame
         Correlation matrix (tickers x tickers)
     """
-    
-    def _compute_atm_curve_simple(df: pd.DataFrame, atm_band: float = 0.05) -> pd.DataFrame:
-        """Extract ATM volatility per expiry from option data."""
-        need_cols = {"T", "moneyness", "sigma"}
-        if df is None or df.empty or not need_cols.issubset(df.columns):
-            return pd.DataFrame(columns=["T", "atm_vol"])
-            
-        d = df.copy()
-        d["T"] = pd.to_numeric(d["T"], errors="coerce")
-        d["moneyness"] = pd.to_numeric(d["moneyness"], errors="coerce")
-        d["sigma"] = pd.to_numeric(d["sigma"], errors="coerce")
-        d = d.dropna(subset=["T", "moneyness", "sigma"])
-        
-        rows = []
-        for T_val, grp in d.groupby("T"):
-            g = grp.dropna(subset=["moneyness", "sigma"])
-            # Try to get median of ATM options first
-            in_band = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
-            if not in_band.empty:
-                atm_vol = float(in_band["sigma"].median())
-            else:
-                # Fallback: use option closest to ATM
-                idx = int((g["moneyness"] - 1.0).abs().idxmin())
-                atm_vol = float(g.loc[idx, "sigma"])
-            rows.append({"T": float(T_val), "atm_vol": atm_vol})
-        
-        return pd.DataFrame(rows).sort_values("T").reset_index(drop=True)
-    
-    tickers = [t.upper() for t in tickers]
-    
-    # Build ATM matrix by expiry rank instead of fixed pillars
-    rows = []
-    for ticker in tickers:
-        try:
-            df = get_smile_slice(ticker, asof, T_target_years=None)
-        except Exception:
-            df = None
-            
-        if df is None or df.empty:
-            # Add row of NaNs for missing ticker
-            values = {i: np.nan for i in range(max_expiries)}
-            rows.append(pd.Series(values, name=ticker))
-            continue
-            
-        # Compute ATM curve for this ticker
-        atm_df = _compute_atm_curve_simple(df, atm_band=atm_band)
-        
-        # Map to expiry ranks (0 = shortest, 1 = next shortest, etc.)
-        values = {}
-        for i in range(max_expiries):
-            if i < len(atm_df):
-                v = atm_df.at[i, "atm_vol"]
-                values[i] = float(v) if pd.notna(v) else np.nan
-            else:
-                values[i] = np.nan
-        
-        rows.append(pd.Series(values, name=ticker))
-    
-    # Build ATM matrix: rows=tickers, cols=expiry_ranks
-    atm_df = pd.DataFrame(rows)
-    
-    # Compute correlation matrix
-    if atm_df.empty or len(atm_df.index) < min_tickers:
-        # Not enough data for correlations
-        corr_df = pd.DataFrame(index=tickers, columns=tickers, dtype=float)
-    else:
-        # Correlations across expiry ranks (transpose so expiries are rows)
-        corr_df = atm_df.transpose().corr(method=corr_method, min_periods=min_periods)
-        
-        # Reindex to ensure all tickers are present
-        corr_df = corr_df.reindex(index=tickers, columns=tickers)
-    
-    return atm_df, corr_df
+    from analysis.correlation_view import corr_by_expiry_rank
+
+    return corr_by_expiry_rank(
+        get_slice=get_smile_slice,
+        tickers=tickers,
+        asof=asof,
+        max_expiries=max_expiries,
+        atm_band=atm_band,
+        min_tickers=min_tickers,
+        corr_method=corr_method,
+        min_periods=min_periods,
+    )
 
 
 def adaptive_correlation_computation(

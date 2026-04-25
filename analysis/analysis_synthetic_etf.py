@@ -36,6 +36,13 @@ from analysis.syntheticETFBuilder import (
     DEFAULT_TENORS,
     DEFAULT_MNY_BINS,
 )
+from analysis.settings import (
+    DEFAULT_CLIP_NEGATIVE_WEIGHTS,
+    DEFAULT_MAX_EXPIRIES,
+    DEFAULT_PILLAR_TOLERANCE_DAYS,
+    DEFAULT_RV_LOOKBACK_DAYS,
+    DEFAULT_WEIGHT_POWER,
+)
 from analysis.analysis_pipeline import (
     sample_smile_curve,
     get_most_recent_date_global,
@@ -52,14 +59,14 @@ WeightMode = str
 class SyntheticETFConfig:
     target: str
     peers: Iterable[str]
-    max_expiries: int = 6
+    max_expiries: int = DEFAULT_MAX_EXPIRIES
     tenors: Tuple[int, ...] = DEFAULT_TENORS
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
-    tolerance_days: float = 7.0
-    lookback: int = 60
+    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
+    lookback: int = DEFAULT_RV_LOOKBACK_DAYS
     weight_mode: WeightMode = "corr_iv_atm"
-    weight_power: float = 1.0
-    clip_negative: bool = True
+    weight_power: float = DEFAULT_WEIGHT_POWER
+    clip_negative: bool = DEFAULT_CLIP_NEGATIVE_WEIGHTS
     use_atm_only_surface: bool = False
     cache_dir: Optional[str] = "data/cache_synth_etf"
     # If True we require surfaces for EVERY peer date to include a date in synthetic output
@@ -117,7 +124,7 @@ class SyntheticETFBuilder:
             mny_bins=self.cfg.mny_bins,
             clip_negative=self.cfg.clip_negative,
             power=self.cfg.weight_power,
-            max_expiries=getattr(self.cfg, "max_expiries", 6),
+            max_expiries=getattr(self.cfg, "max_expiries", DEFAULT_MAX_EXPIRIES),
         )
 
         w = self._weight_computer.compute_weights(
