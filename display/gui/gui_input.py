@@ -59,24 +59,36 @@ PLOT_TYPES = (
     "ETF Weights",
 )
 
+# Stable IDs decoupled from display labels. All routing logic must use these;
+# never match against PLOT_TYPES strings directly so label renames stay safe.
+PLOT_ID: dict[str, str] = {
+    "Smile (K/S vs IV)":      "smile",
+    "Term (ATM vs T)":         "term",
+    "Relative Weight Matrix":  "corr_matrix",
+    "Synthetic Surface (Smile)": "synthetic_surface",
+    "ETF Weights":             "etf_weights",
+}
+
+
+def plot_id(label: str) -> str:
+    """Return the stable routing ID for a display label."""
+    return PLOT_ID.get(label, label)
+
 
 def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
     """Infer feature scope from plot and feature mode.
 
     Returns one of: 'smile', 'term', 'surface'."""
-    if plot_type.startswith("Smile"):
+    pid = plot_id(plot_type)
+    if pid == "smile":
         return "smile"
-    if plot_type.startswith("Term"):
+    if pid == "term":
         return "term"
-    if plot_type.startswith("Synthetic Surface"):
+    if pid == "synthetic_surface":
         return "surface"
-    if plot_type.startswith("Relative Weight Matrix"):
-        if feature_mode in ("iv_atm", "ul"):
-            # decide later based on pillars count
-            return "term"
-        else:
-            return "surface"
-    if plot_type.startswith("ETF Weights"):
+    if pid == "corr_matrix":
+        return "term" if feature_mode in ("iv_atm", "ul") else "surface"
+    if pid == "etf_weights":
         return "surface" if feature_mode.startswith("surface") else "term"
     return "term"
 
@@ -241,7 +253,8 @@ class InputPanel(ttk.Frame):
         self.cmb_weight_method.set(DEFAULT_WEIGHT_METHOD)
         self.cmb_weight_method.grid(row=0, column=3, padx=6)
         self.cmb_weight_method.bind(
-            "<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility())
+            "<<ComboboxSelected>>",
+            lambda e: (self._sync_settings(), self._refresh_visibility(), self._replot_if_weights()),
         )
 
         ttk.Label(row3, text="Feature mode").grid(row=0, column=4, sticky="w")
@@ -254,7 +267,8 @@ class InputPanel(ttk.Frame):
         self.cmb_feature_mode.set(DEFAULT_FEATURE_MODE)
         self.cmb_feature_mode.grid(row=0, column=5, padx=6)
         self.cmb_feature_mode.bind(
-            "<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility())
+            "<<ComboboxSelected>>",
+            lambda e: (self._sync_settings(), self._refresh_visibility(), self._replot_if_weights()),
         )
 
         ttk.Label(row3, text="ATM band").grid(row=0, column=6, sticky="w")
@@ -303,6 +317,7 @@ class InputPanel(ttk.Frame):
 
     def bind_plot(self, fn: Callable[[], None]):
         self.btn_plot.configure(command=fn)
+        self._plot_fn = fn
 
     def bind_target_change(self, fn: Callable):
         # run when user confirms/enters target
@@ -494,25 +509,28 @@ class InputPanel(ttk.Frame):
             # Avoid raising UI errors from sync process
             pass
 
+    def _replot_if_weights(self):
+        """Re-render the plot immediately when weight/feature controls change and ETF Weights is active."""
+        if plot_id(self.get_plot_type()) == "etf_weights" and hasattr(self, "_plot_fn"):
+            self._plot_fn()
+
     def _refresh_visibility(self):
         wm = self.get_weight_method()
         feat = self.get_feature_mode()
-        plot = self.get_plot_type()
+        pid = plot_id(self.get_plot_type())
 
-        show_T = plot.startswith("Smile")
-        show_pillars = (
-            plot.startswith("Term")
-            or plot.startswith("Synthetic Surface")
-            or (plot.startswith("Relative Weight Matrix") and feat.startswith("surface"))
+        show_T = pid == "smile"
+        show_pillars = pid in ("term", "synthetic_surface") or (
+            pid == "corr_matrix" and feat.startswith("surface")
         )
 
-        if plot.startswith("Relative Weight Matrix") and feat in ("iv_atm", "ul"):
+        if pid == "corr_matrix" and feat in ("iv_atm", "ul"):
             show_pillars = len(self.get_pillars()) >= 2
             show_T = not show_pillars
 
         show_model = (
             feat == "surface"
-            and (plot.startswith("Smile") or plot.startswith("Synthetic Surface"))
+            and pid in ("smile", "synthetic_surface")
         )
 
         self.ent_days.configure(state=("normal" if show_T else "disabled"))

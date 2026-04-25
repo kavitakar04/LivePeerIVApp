@@ -23,8 +23,8 @@ if str(ROOT) not in sys.path:
 
 from analysis.analysis_pipeline import available_tickers, available_dates, ingest_and_process
 from display.gui.gui_input import InputPanel
-from display.gui.gui_plot_manager import PlotManager
-from display.gui.spillover_gui import launch_spillover, SpilloverFrame
+from display.gui.gui_plot_manager import PlotManager, plot_id
+from display.gui.spillover_gui import SpilloverFrame
 from display.gui.parameters_tab import ParametersTab
 
 
@@ -43,7 +43,7 @@ class BrowserApp(tk.Tk):
         # ---- Main exploration tab ----
         self.tab_browser = ttk.Frame(self.notebook)
         # Clarify purpose: this tab lets users explore IV surfaces
-        self.notebook.add(self.tab_browser, text="Parameter Explorer")
+        self.notebook.add(self.tab_browser, text="IV Explorer")
 
         # Inputs
         self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
@@ -85,9 +85,6 @@ class BrowserApp(tk.Tk):
                                      command=self._on_speed_change)
         self.speed_scale.pack(side=tk.LEFT, padx=2)
 
-        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        self.btn_spill = ttk.Button(nav, text="Spillover", command=self._open_spillover)
-        self.btn_spill.pack(side=tk.LEFT, padx=4)
 
         # Canvas
         self.fig = plt.Figure(figsize=(11.2, 6.6))
@@ -121,7 +118,6 @@ class BrowserApp(tk.Tk):
         self._update_nav_buttons()
         self._update_animation_buttons()
 
-        self.spill_win = None
 
     # ---------- events ----------
     def _on_target_change(self, *_):
@@ -224,24 +220,8 @@ class BrowserApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_plot(self):
-        settings = dict(
-            plot_type=self.inputs.get_plot_type(),
-            target=self.inputs.get_target(),
-            asof=self.inputs.get_asof(),
-            model=self.inputs.get_model(),
-            T_days=self.inputs.get_T_days(),
-            ci=self.inputs.get_ci(),
-            x_units=self.inputs.get_x_units(),
-            atm_band=self.inputs.get_atm_band(),
-            weight_method=self.inputs.get_weight_method(),
-            feature_mode=self.inputs.get_feature_mode(),
-            overlay_synth=self.inputs.get_overlay_synth(),
-            overlay_peers=self.inputs.get_overlay_peers(),
-            peers=self.inputs.get_peers(),
-            pillars=self.inputs.get_pillars(),
-            max_expiries=self.inputs.get_max_exp(),
-        )
-        if not settings["target"] or not settings["asof"]:
+        settings = self.inputs.get_settings()
+        if not settings.get("target") or not settings.get("asof"):
             self.status.config(text="Enter target and date to plot")
             return
 
@@ -249,35 +229,50 @@ class BrowserApp(tk.Tk):
 
         def worker():
             try:
-                # Check if animation is requested and supported
-                if (self.var_animated.get() and
-                        self.plot_mgr.has_animation_support(settings["plot_type"])):
-                    # Try to create animated plot
-                    if self.plot_mgr.plot_animated(self.ax, settings):
-                        self.after(0, lambda: self.status.config(text="Animated plot created"))
-                    else:
-                        # Fall back to static plot
-                        self.plot_mgr.plot(self.ax, settings)
-                        self.after(0, lambda: self.status.config(text="Animation failed - using static plot"))
-                else:
-                    # Create static plot
-                    self.plot_mgr.stop_animation()  # Stop any existing animation
-                    self.plot_mgr.plot(self.ax, settings)
+                want_anim = (
+                    self.var_animated.get()
+                    and self.plot_mgr.has_animation_support(plot_id(settings.get("plot_type", "")))
+                )
 
-                self.canvas.draw()
-                self.after(0, self._update_nav_buttons)
-                self.after(0, self._update_animation_buttons)
-                # Refresh parameter table with latest fit info
-                self.after(0, lambda: self.tab_params.update(self.plot_mgr.last_fit_info))
+                if want_anim:
+                    # FuncAnimation registers a timer with Tk — must run on main thread.
+                    def render_animated():
+                        try:
+                            if self.plot_mgr.plot_animated(self.ax, settings):
+                                self.status.config(text="Animated plot created")
+                            else:
+                                self.plot_mgr.plot(self.ax, settings)
+                                self.status.config(text="Animation failed — using static plot")
+                            self.canvas.draw()
+                            self._update_nav_buttons()
+                            self._update_animation_buttons()
+                            self.tab_params.update(self.plot_mgr.last_fit_info)
+                        except Exception as exc:
+                            messagebox.showerror("Plot error", str(exc))
+                            self.status.config(text="Plot failed")
+                            self._update_nav_buttons()
+                            self._update_animation_buttons()
+                    self.after(0, render_animated)
+                else:
+                    # Computation (DB queries, weight calc) stays on the worker thread.
+                    self.plot_mgr.stop_animation()
+                    self.plot_mgr.plot(self.ax, settings)
+                    # canvas.draw() and all Tk widget mutations go back to the main thread.
+                    def finish():
+                        self.canvas.draw()
+                        self.status.config(text="Ready")
+                        self._update_nav_buttons()
+                        self._update_animation_buttons()
+                        self.tab_params.update(self.plot_mgr.last_fit_info)
+                    self.after(0, finish)
 
             except Exception as e:
-                def handle_err(exc: Exception):
+                def handle_err(exc=e):
                     messagebox.showerror("Plot error", str(exc))
                     self.status.config(text="Plot failed")
                     self._update_nav_buttons()
                     self._update_animation_buttons()
-                # Note: schedule the handler with the original exception
-                self.after(0, lambda exc=e: handle_err(exc))
+                self.after(0, handle_err)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -298,7 +293,7 @@ class BrowserApp(tk.Tk):
     def _update_animation_buttons(self):
         """Update animation control button states."""
         plot_type = self.inputs.get_plot_type()
-        has_anim_support = self.plot_mgr.has_animation_support(plot_type)
+        has_anim_support = self.plot_mgr.has_animation_support(plot_id(plot_type))
         is_animated = self.var_animated.get()
         is_anim_active = self.plot_mgr.is_animation_active()
 
@@ -344,13 +339,6 @@ class BrowserApp(tk.Tk):
             self.plot_mgr.set_animation_speed(speed_ms)
         except Exception:
             pass
-
-    def _open_spillover(self):
-        """Open spillover analysis window."""
-        if self.spill_win is None or not self.spill_win.winfo_exists():
-            self.spill_win = launch_spillover(self, input_panel=self.inputs)
-        else:
-            self.spill_win.lift()
 
     def _load_tickers(self):
         try:
