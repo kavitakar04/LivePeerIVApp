@@ -26,6 +26,7 @@ from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager, plot_id
 from display.gui.spillover_gui import SpilloverFrame
 from display.gui.parameters_tab import ParametersTab
+from display.gui.rv_signals_tab import RVSignalsFrame
 
 
 class BrowserApp(tk.Tk):
@@ -111,6 +112,10 @@ class BrowserApp(tk.Tk):
         self.tab_spillover = SpilloverFrame(self.notebook, input_panel=self.inputs)
         self.notebook.add(self.tab_spillover, text="Spillover")
 
+        # ---- RV Signals tab ----
+        self.tab_rv_signals = RVSignalsFrame(self.notebook, input_panel=self.inputs)
+        self.notebook.add(self.tab_rv_signals, text="RV Signals")
+
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -179,6 +184,8 @@ class BrowserApp(tk.Tk):
                 self.status.config(text="Ready")
                 if hasattr(self, "tab_spillover"):
                     self.tab_spillover.on_browser_selection_changed()
+                if hasattr(self, "tab_rv_signals"):
+                    self.tab_rv_signals.on_browser_selection_changed()
 
             self.after(0, update_ui)
 

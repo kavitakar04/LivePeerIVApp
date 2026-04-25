@@ -1026,6 +1026,67 @@ def prepare_term_data(
     }
 
 
+# -----------------------------------------------------------------------------
+# Relative Value Heatmap (Phase 1/5 — surface residual + weight stability)
+# -----------------------------------------------------------------------------
+
+def prepare_rv_heatmap_data(
+    target: str,
+    peers: Iterable[str],
+    asof: str,
+    weight_mode: str = "corr_iv_atm",
+    max_expiries: int = 6,
+    lookback: int = 60,
+) -> Dict[str, Any]:
+    """Precompute per-cell surface-residual data for the GUI RV Heatmap plot.
+
+    Builds the target and synthetic surface grids, computes the normalised
+    per-cell residual (z-scored over ``lookback`` prior dates when available),
+    and computes per-peer weight stability.
+
+    Returns
+    -------
+    dict with keys:
+        ``weights``         – pd.Series (peer → weight)
+        ``latest_residual`` – DataFrame (moneyness × tenor) for ``asof``,
+                              or None if unavailable
+        ``weight_stability``– DataFrame (peer → rolling_corr / stable)
+        ``asof``            – the as-of date used
+        ``target``          – target ticker
+    """
+    from analysis.rv_analysis import compute_surface_residual, compute_weight_stability  # delayed
+
+    target = target.upper()
+    peers = [p.upper() for p in peers]
+
+    w = compute_peer_weights(target, peers, weight_mode=weight_mode)
+    w_dict = w.to_dict()
+
+    all_tickers = list(set([target] + list(w.index)))
+    surfaces = build_surface_grids(tickers=all_tickers, max_expiries=max_expiries)
+
+    target_surfaces = surfaces.get(target, {})
+    peer_surfaces = {t: surfaces[t] for t in w.index if t in surfaces and t != target}
+    synth_surfaces = combine_surfaces(peer_surfaces, w_dict) if peer_surfaces else {}
+
+    residuals = compute_surface_residual(target_surfaces, synth_surfaces, lookback=lookback)
+
+    asof_ts = pd.Timestamp(asof).normalize()
+    latest_residual = residuals.get(asof_ts)
+    if latest_residual is None and residuals:
+        latest_residual = residuals[max(residuals.keys())]
+
+    stability = compute_weight_stability(target, peers)
+
+    return {
+        "weights": w,
+        "latest_residual": latest_residual,
+        "weight_stability": stability,
+        "asof": asof,
+        "target": target,
+    }
+
+
 def fit_smile_for(
     ticker: str,
     asof_date: Optional[str] = None,

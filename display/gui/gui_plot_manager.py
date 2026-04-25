@@ -22,12 +22,20 @@ from display.plotting.term_plot import (
     plot_term_structure_comparison,
 )
 from display.plotting.weights_plot import plot_weights
+from display.plotting.rv_plots import (
+    plot_surface_residual_heatmap,
+    plot_skew_spread,
+    plot_rv_signals_table,
+)
 
 # Surfaces & synthetic construction
 from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
-from analysis.analysis_pipeline import get_smile_slice, prepare_smile_data, prepare_term_data
+from analysis.analysis_pipeline import (
+    get_smile_slice, prepare_smile_data, prepare_term_data,
+    prepare_rv_heatmap_data,
+)
 from analysis.compute_or_load import compute_or_load
 from display.gui.gui_input import plot_id
 
@@ -533,6 +541,18 @@ class PlotManager:
             )
             return
 
+        # --- RV Heatmap ---
+        elif plot_type.startswith("RV Heatmap"):
+            self._clear_correlation_colorbar(ax)
+            self._plot_rv_heatmap(ax, target, peers, asof, weight_mode, max_expiries)
+            return
+
+        # --- RV Signals ---
+        elif plot_type.startswith("RV Signals"):
+            self._clear_correlation_colorbar(ax)
+            self._plot_rv_signals(ax, target, peers, asof, weight_mode, max_expiries)
+            return
+
         else:
             ax.text(0.5, 0.5, f"Unknown plot: {plot_type}", ha="center", va="center")
 
@@ -859,6 +879,67 @@ class PlotManager:
         except Exception:
             ax.text(0.5, 0.5, "Synthetic surface plotting failed", ha="center", va="center")
             ax.set_title(f"Synthetic Surface - {target} vs peers")
+
+    # -------------------- RV plotters --------------------
+    def _plot_rv_heatmap(self, ax, target, peers, asof, weight_mode, max_expiries):
+        """Plot the surface residual heatmap (target − synthetic, z-scored per cell)."""
+        peers = [p for p in peers if p]
+        if not peers:
+            ax.text(0.5, 0.5, "Provide peers to build RV heatmap", ha="center", va="center")
+            return
+        try:
+            data = prepare_rv_heatmap_data(
+                target=target,
+                peers=peers,
+                asof=asof,
+                weight_mode=weight_mode,
+                max_expiries=max_expiries,
+            )
+            residual = data.get("latest_residual")
+            stability = data.get("weight_stability")
+            mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
+            if mode_lbl == "corr":
+                mode_lbl = "relative weight matrix"
+            title = f"{target} surface residual vs synthetic | {asof} | {mode_lbl}"
+            plot_surface_residual_heatmap(ax, residual, title=title)
+
+            # Annotate weight stability as text below the title
+            if stability is not None and not stability.empty and "rolling_corr" in stability.columns:
+                unstable = stability[~stability["stable"].astype(bool)]
+                if not unstable.empty:
+                    note = "⚠ Low peer stability: " + ", ".join(unstable.index.tolist())
+                    ax.set_xlabel(note, fontsize=7, color="tab:orange")
+        except Exception as exc:
+            ax.text(0.5, 0.5, f"RV heatmap failed:\n{exc}", ha="center", va="center",
+                    wrap=True)
+            ax.set_title(f"RV Heatmap - {target}")
+
+    def _plot_rv_signals(self, ax, target, peers, asof, weight_mode, max_expiries):
+        """Render ranked RV signals as a matplotlib table."""
+        peers = [p for p in peers if p]
+        if not peers:
+            ax.text(0.5, 0.5, "Provide peers for RV signal computation", ha="center", va="center")
+            return
+        try:
+            from analysis.rv_analysis import generate_rv_signals
+            signals = generate_rv_signals(
+                target=target,
+                peers=peers,
+                asof=asof,
+                weight_mode=weight_mode,
+                max_expiries=max_expiries,
+            )
+            mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
+            if mode_lbl == "corr":
+                mode_lbl = "relative weight matrix"
+            plot_rv_signals_table(
+                ax, signals,
+                title=f"{target} RV signals | {asof} | {mode_lbl}",
+            )
+        except Exception as exc:
+            ax.text(0.5, 0.5, f"RV signals failed:\n{exc}", ha="center", va="center",
+                    wrap=True)
+            ax.set_title(f"RV Signals - {target}")
 
     # -------------------- smile click-through renderer --------------------
     def _render_smile_at_index(self):
