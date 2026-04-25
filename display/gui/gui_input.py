@@ -57,16 +57,20 @@ PLOT_TYPES = (
     "Relative Weight Matrix",
     "Synthetic Surface (Smile)",
     "ETF Weights",
+    "RV Heatmap",
+    "RV Signals",
 )
 
 # Stable IDs decoupled from display labels. All routing logic must use these;
 # never match against PLOT_TYPES strings directly so label renames stay safe.
 PLOT_ID: dict[str, str] = {
-    "Smile (K/S vs IV)":      "smile",
-    "Term (ATM vs T)":         "term",
-    "Relative Weight Matrix":  "corr_matrix",
+    "Smile (K/S vs IV)":        "smile",
+    "Term (ATM vs T)":           "term",
+    "Relative Weight Matrix":    "corr_matrix",
     "Synthetic Surface (Smile)": "synthetic_surface",
-    "ETF Weights":             "etf_weights",
+    "ETF Weights":               "etf_weights",
+    "RV Heatmap":                "rv_heatmap",
+    "RV Signals":                "rv_signals",
 }
 
 
