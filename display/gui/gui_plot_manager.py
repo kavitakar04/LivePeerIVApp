@@ -91,6 +91,42 @@ def _mny_from_index_labels(idx) -> np.ndarray:
     return np.array(out, dtype=float)
 
 
+def _asof_candidates(asof) -> list:
+    """Return candidate keys used by surface dictionaries for a requested as-of value."""
+    vals = []
+    if asof is None:
+        return vals
+    vals.append(asof)
+    try:
+        ts = pd.Timestamp(asof)
+        vals.extend([ts, ts.normalize()])
+        if ts.tzinfo is not None:
+            vals.append(ts.tz_localize(None))
+            vals.append(ts.tz_localize(None).normalize())
+    except Exception:
+        pass
+
+    out = []
+    seen = set()
+    for v in vals:
+        key = (type(v), str(v))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(v)
+    return out
+
+
+def _value_for_asof(mapping: dict, asof):
+    """Retrieve an as-of keyed value from dicts that may use str or Timestamp keys."""
+    if not mapping:
+        return None
+    for k in _asof_candidates(asof):
+        if k in mapping:
+            return mapping[k]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Plot Manager
 # ---------------------------------------------------------------------------
@@ -659,12 +695,12 @@ class PlotManager:
                     tickers=tickers, use_atm_only=False, max_expiries=self._current_max_expiries
                 )
 
-                if target in surfaces and asof in surfaces[target]:
+                tgt_grid = _value_for_asof(surfaces.get(target, {}), asof)
+                if tgt_grid is not None:
                     peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
                     synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
-                    if asof in synth_by_date:
-                        tgt_grid = surfaces[target][asof]
-                        syn_grid = synth_by_date[asof]
+                    syn_grid = _value_for_asof(synth_by_date, asof)
+                    if syn_grid is not None:
 
                         tgt_cols = _cols_to_days(tgt_grid.columns)
                         syn_cols = _cols_to_days(syn_grid.columns)
@@ -747,20 +783,19 @@ class PlotManager:
             tickers = list({target, *peers})
             surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
 
-            if target not in surfaces or asof not in surfaces[target]:
+            tgt_grid = _value_for_asof(surfaces.get(target, {}), asof)
+            if tgt_grid is None:
                 ax.text(0.5, 0.5, "No target surface for date", ha="center", va="center")
                 ax.set_title(f"Synthetic Surface - {target} vs peers")
                 return
 
             peer_surfaces = {t: surfaces[t] for t in peers if t in surfaces}
             synth_by_date = combine_surfaces(peer_surfaces, w.to_dict())
-            if asof not in synth_by_date:
+            syn_grid = _value_for_asof(synth_by_date, asof)
+            if syn_grid is None:
                 ax.text(0.5, 0.5, "No synthetic surface for date", ha="center", va="center")
                 ax.set_title(f"Synthetic Surface - {target} vs peers")
                 return
-
-            tgt_grid = surfaces[target][asof]
-            syn_grid = synth_by_date[asof]
             tgt_cols_days = _cols_to_days(tgt_grid.columns)
             syn_cols_days = _cols_to_days(syn_grid.columns)
             i_tgt = _nearest_tenor_idx(tgt_cols_days, T_days)
@@ -947,13 +982,13 @@ class PlotManager:
                     weights = self._smile_ctx.get("weights")
                     tickers = [target] + (settings.get("peers") or [])
                     surfaces = self._get_surface_grids(tickers, self._current_max_expiries)
-                    if tgt_surface is None and target in surfaces and asof in surfaces[target]:
-                        tgt_surface = surfaces[target][asof]
+                    if tgt_surface is None and target in surfaces:
+                        tgt_surface = _value_for_asof(surfaces[target], asof)
                         self._smile_ctx["tgt_surface"] = tgt_surface
                     if weights is not None:
                         peer_surfaces = {p: surfaces[p] for p in (settings.get("peers") or []) if p in surfaces}
                         synth_by_date = combine_surfaces(peer_surfaces, weights.to_dict())
-                        syn_surface = synth_by_date.get(asof)
+                        syn_surface = _value_for_asof(synth_by_date, asof)
                         self._smile_ctx["syn_surface"] = syn_surface
                 except Exception:
                     syn_surface = None
