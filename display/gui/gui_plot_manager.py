@@ -928,7 +928,7 @@ class PlotManager:
 
             # Annotate weight stability as text below the title
             if stability is not None and not stability.empty and "rolling_corr" in stability.columns:
-                unstable = stability[stability["stable"] == False]  # noqa: E712
+                unstable = stability[~stability["stable"].astype(bool)]
                 if not unstable.empty:
                     note = "⚠ Low peer stability: " + ", ".join(unstable.index.tolist())
                     ax.set_xlabel(note, fontsize=7, color="tab:orange")

@@ -225,7 +225,11 @@ class RVSignalsFrame(ttk.Frame):
                     vals.append(str(v) if v != "" and pd.notna(v) else "—")
 
             z = row.get("z_score")
-            z_f = float(z) if (pd.notna(z) and np.isfinite(float(z) if pd.notna(z) else float("nan"))) else float("nan")
+            try:
+                z_f = float(z) if pd.notna(z) else float("nan")
+                z_f = z_f if np.isfinite(z_f) else float("nan")
+            except (TypeError, ValueError):
+                z_f = float("nan")
             if np.isfinite(z_f) and z_f > 1.5:
                 tag = "rich"
             elif np.isfinite(z_f) and z_f < -1.5:

@@ -15,6 +15,15 @@ import numpy as np
 import pandas as pd
 
 
+def _safe_float(val) -> float:
+    """Convert *val* to float; return ``np.nan`` if not finite or not convertible."""
+    try:
+        f = float(val)
+        return f if np.isfinite(f) else np.nan
+    except (TypeError, ValueError):
+        return np.nan
+
+
 # ---------------------------------------------------------------------------
 # Phase 1 — Surface residual
 # ---------------------------------------------------------------------------
@@ -414,10 +423,9 @@ def generate_rv_signals(
         if not rv_df.empty:
             latest = rv_df.sort_values("asof_date").groupby("pillar_days").tail(1)
             for _, row in latest.iterrows():
-                z = row.get("z", np.nan)
-                if not np.isfinite(float(z) if pd.notna(z) else np.nan):
+                z_f = _safe_float(row.get("z", np.nan))
+                if not np.isfinite(z_f):
                     continue
-                z_f = float(z)
                 spread_v = row.get("spread", np.nan)
                 iv_tgt = row.get("iv_target", np.nan)
                 iv_syn = row.get("iv_synth", np.nan)
@@ -427,11 +435,11 @@ def generate_rv_signals(
                     "signal_type": "ATM Level",
                     "asof_date": str(row.get("asof_date", asof)),
                     "T_days": T_days,
-                    "value": float(iv_tgt) if np.isfinite(float(iv_tgt) if pd.notna(iv_tgt) else np.nan) else np.nan,
-                    "synth_value": float(iv_syn) if np.isfinite(float(iv_syn) if pd.notna(iv_syn) else np.nan) else np.nan,
-                    "spread": float(spread_v) if np.isfinite(float(spread_v) if pd.notna(spread_v) else np.nan) else np.nan,
+                    "value": _safe_float(iv_tgt),
+                    "synth_value": _safe_float(iv_syn),
+                    "spread": _safe_float(spread_v),
                     "z_score": z_f,
-                    "pct_rank": float(pct) if np.isfinite(float(pct) if pd.notna(pct) else np.nan) else np.nan,
+                    "pct_rank": _safe_float(pct),
                     "description": f"{target} ATM vol vs synthetic at {T_days}d",
                 })
     except Exception:
@@ -449,16 +457,15 @@ def generate_rv_signals(
                     "Skew": ("target_skew", "synth_skew", "skew_spread", "put/call skew"),
                     "Curvature": ("target_curv", "synth_curv", "curv_spread", "vol curvature"),
                 }.items():
-                    spread_v = row.get(spread_col, np.nan)
-                    s_f = float(spread_v) if pd.notna(spread_v) else np.nan
+                    s_f = _safe_float(row.get(spread_col, np.nan))
                     if not np.isfinite(s_f):
                         continue
                     signals.append({
                         "signal_type": sig_type,
                         "asof_date": asof,
                         "T_days": T_days,
-                        "value": float(row.get(tgt_col, np.nan)) if pd.notna(row.get(tgt_col)) else np.nan,
-                        "synth_value": float(row.get(syn_col, np.nan)) if pd.notna(row.get(syn_col)) else np.nan,
+                        "value": _safe_float(row.get(tgt_col, np.nan)),
+                        "synth_value": _safe_float(row.get(syn_col, np.nan)),
                         "spread": s_f,
                         "z_score": np.nan,
                         "pct_rank": np.nan,
