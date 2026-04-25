@@ -6,6 +6,7 @@ from typing import Iterable, Optional
 import pandas as pd
 
 from .db_schema import init_db
+from .quote_quality import normalize_market_fields, to_float
 
 import os
 
@@ -75,6 +76,16 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
         if mid is None:
             mid = q.get("last_raw")
         open_interest = q.get("open_interest", q.get("open_interest_raw"))
+        bid, ask, mid, market_reason = normalize_market_fields(
+            bid,
+            ask,
+            mid=mid,
+            last=q.get("last_raw"),
+        )
+        if market_reason in {"negative_bid", "negative_ask", "crossed_market"}:
+            continue
+        volume = to_float(volume)
+        open_interest = to_float(open_interest)
 
         rows.append((
             asof_date, q["ticker"], expiry, float(q["K"]), q["call_put"],
@@ -85,19 +96,20 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
             q.get("vendor", "yfinance"),
         ))
 
-    with conn:
-        conn.executemany(
-            """
-            INSERT OR REPLACE INTO options_quotes (
-                asof_date, ticker, expiry, strike, call_put,
-                iv, spot, ttm_years, moneyness, log_moneyness, delta, is_atm,
-                volume, open_interest, bid, ask, mid,
-                r, q, price, gamma, vega, theta, rho, d1, d2,
-                vendor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
+    if rows:
+        with conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO options_quotes (
+                    asof_date, ticker, expiry, strike, call_put,
+                    iv, spot, ttm_years, moneyness, log_moneyness, delta, is_atm,
+                    volume, open_interest, bid, ask, mid,
+                    r, q, price, gamma, vega, theta, rho, d1, d2,
+                    vendor
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
     check_db_health(conn)
     return len(rows)
 

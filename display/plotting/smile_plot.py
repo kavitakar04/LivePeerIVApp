@@ -48,6 +48,7 @@ def fit_and_plot_smile(
     bands: Optional[Bands] = None,
     moneyness_grid: Tuple[float, float, int] = (0.8, 1.2, 121),
     show_points: bool = True,
+    call_put: Optional[np.ndarray] = None,   # array of 'C'/'P' per point
     beta: float = 0.5,              # SABR beta
     label: Optional[str] = None,
     line_kwargs: Optional[Dict] = None,
@@ -80,6 +81,7 @@ def fit_and_plot_smile(
 
     K = K[m]
     iv = iv[m]
+    cp = np.asarray(call_put)[m] if call_put is not None and len(call_put) == len(m) else None
 
     # ---- grid in strike space via moneyness
     mlo, mhi, n = moneyness_grid
@@ -89,11 +91,32 @@ def fit_and_plot_smile(
     # ---- artists map for legend toggles
     series_map: Dict[str, list] = {}
 
-    # ---- observed points
+    # ---- observed points (split by call/put when available)
     if show_points:
-        pts = ax.scatter(K / S, iv, s=20, alpha=0.85, label="Observed")
-        if enable_toggles:
-            series_map["Observed Points"] = [pts]
+        if cp is not None:
+            call_mask = cp == "C"
+            put_mask  = cp == "P"
+            obs_artists = []
+            if call_mask.any():
+                pts_c = ax.scatter(K[call_mask] / S, iv[call_mask],
+                                   s=20, alpha=0.85, color="#1f77b4", label="Calls")
+                obs_artists.append(pts_c)
+            if put_mask.any():
+                pts_p = ax.scatter(K[put_mask] / S, iv[put_mask],
+                                   s=20, alpha=0.85, color="#d62728", label="Puts")
+                obs_artists.append(pts_p)
+            # fallback for any unlabelled rows
+            other_mask = ~call_mask & ~put_mask
+            if other_mask.any():
+                pts_o = ax.scatter(K[other_mask] / S, iv[other_mask],
+                                   s=20, alpha=0.85, color="grey", label="Observed")
+                obs_artists.append(pts_o)
+            if enable_toggles:
+                series_map["Observed Points"] = obs_artists
+        else:
+            pts = ax.scatter(K / S, iv, s=20, alpha=0.85, label="Observed")
+            if enable_toggles:
+                series_map["Observed Points"] = [pts]
 
     # ---- fit + optional CI
     if not params:

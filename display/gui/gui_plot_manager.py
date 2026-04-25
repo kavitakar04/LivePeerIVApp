@@ -194,6 +194,16 @@ class PlotManager:
                 if hasattr(ax.figure, "_orig_subplotpars"):
                     l, r, b, t = ax.figure._orig_subplotpars
                     ax.figure.subplots_adjust(left=l, right=r, bottom=b, top=t)
+            for attr in ("_corr_weight_ax", "_corr_coverage_ax", "_corr_colorbar_ax"):
+                if hasattr(ax.figure, attr):
+                    try:
+                        getattr(ax.figure, attr).remove()
+                    except Exception:
+                        pass
+                    try:
+                        delattr(ax.figure, attr)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -284,6 +294,9 @@ class PlotManager:
         self._current_max_expiries = max_expiries
         self.last_settings = settings
 
+        # stable routing ID — all dispatch below uses this, not the raw label
+        pid = plot_id(plot_type)
+
         # create a bounded get_smile_slice with current max_expiries
         def bounded_get_smile_slice(ticker, asof_date=None, T_target_years=None, call_put=None, nearest_by="T"):
             return get_smile_slice(
@@ -292,11 +305,12 @@ class PlotManager:
 
         self.get_smile_slice = bounded_get_smile_slice
 
+        self.stop_animation()
         self._clear_child_axes(ax)
         ax.clear()
 
         # --- Smile: click-through (preload all expiries for date) ---
-        if plot_type.startswith("Smile"):
+        if pid == "smile":
             self._clear_correlation_colorbar(ax)
 
             weights = None
@@ -351,6 +365,7 @@ class PlotManager:
                 "K_arr": data["K_arr"],
                 "sigma_arr": data["sigma_arr"],
                 "S_arr": data["S_arr"],
+                "cp_arr": data.get("cp_arr"),
                 "Ts": data["Ts"],
                 "idx": data["idx0"],
                 "settings": settings,
@@ -370,7 +385,7 @@ class PlotManager:
             return
 
         # --- Term: needs all expiries for this day ---
-        elif plot_type.startswith("Term"):
+        elif pid == "term":
             self._clear_correlation_colorbar(ax)
 
             weights = None
@@ -462,18 +477,18 @@ class PlotManager:
             return
 
         # --- Relative Weight Matrix ---
-        elif plot_type.startswith("Relative Weight Matrix"):
+        elif pid == "corr_matrix":
             self._plot_corr_matrix(ax, target, peers, asof, pillars, weight_mode, atm_band)
             return
 
         # --- Synthetic Surface ---
-        elif plot_type.startswith("Synthetic Surface"):
+        elif pid == "synthetic_surface":
             self._clear_correlation_colorbar(ax)
             self._plot_synth_surface(ax, target, peers, asof, T_days, weight_mode)
             return
 
         # --- ETF Weights only ---
-        elif plot_type.startswith("ETF Weights"):
+        elif pid == "etf_weights":
             self._clear_correlation_colorbar(ax)
             if not peers:
                 ax.text(0.5, 0.5, "No peers", ha="center", va="center")
@@ -636,6 +651,7 @@ class PlotManager:
             else:
                 bands = tps_confidence_bands(S, K, T_used, IV, K_grid, level=float(ci))
 
+        cp = dfe["call_put"].to_numpy() if "call_put" in dfe.columns else None
         info = fit_and_plot_smile(
             ax,
             S=S,
@@ -647,7 +663,8 @@ class PlotManager:
             bands=bands,
             moneyness_grid=(0.7, 1.3, 121),
             show_points=True,
-            enable_toggles=True,  # clickable legend toggles for all models
+            call_put=cp,
+            enable_toggles=True,
         )
         title = f"{target}  {asof}  T≈{T_used:.3f}y  RMSE={info['rmse']:.4f}"
 
@@ -927,6 +944,8 @@ class PlotManager:
         S = float(np.nanmedian(S_arr[mask]))
         K = K_arr[mask]
         IV = sigma_arr[mask]
+        cp_arr = self._smile_ctx.get("cp_arr")
+        cp = cp_arr[mask] if cp_arr is not None else None
 
         fit_map = self._smile_ctx.get("fit_by_expiry", {})
         pre = fit_map.get(T0)
@@ -959,6 +978,7 @@ class PlotManager:
             bands=bands,
             moneyness_grid=(0.7, 1.3, 121),
             show_points=True,
+            call_put=cp,
             label=f"{target} {model.upper()}",
             enable_toggles=True,
         )
@@ -1273,7 +1293,7 @@ class PlotManager:
     # -------------------- animation control --------------------
     def has_animation_support(self, plot_type: str) -> bool:
         """Check if animation is supported for the given plot type."""
-        return plot_type in ["smile", "surface", "synthetic_surface"]
+        return plot_id(plot_type) in ("smile", "synthetic_surface")
 
     def is_animation_active(self) -> bool:
         """Check if an animation is currently active."""

@@ -238,9 +238,13 @@ def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
     
     conn = get_conn()
     # prefer dedicated table; fallback to options_quotes spot
+    placeholders = ",".join("?" * len(tickers_set))
+    ticker_params = sorted(tickers_set)
     try:
         df = pd.read_sql_query(
-            "SELECT asof_date, ticker, close FROM underlying_prices", conn
+            f"SELECT asof_date, ticker, close FROM underlying_prices WHERE ticker IN ({placeholders})",
+            conn,
+            params=ticker_params,
         )
         logger.debug(f"Loaded {len(df)} underlying price records from dedicated table")
     except Exception:
@@ -249,7 +253,9 @@ def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
         
     if df.empty:
         df = pd.read_sql_query(
-            "SELECT asof_date, ticker, spot AS close FROM options_quotes", conn
+            f"SELECT asof_date, ticker, spot AS close FROM options_quotes WHERE ticker IN ({placeholders})",
+            conn,
+            params=ticker_params,
         )
         logger.debug(f"Loaded {len(df)} price records from options_quotes fallback")
     if df.empty:
@@ -561,11 +567,18 @@ class UnifiedWeightComputer:
                 return self._fallback_equal(peers_list)
 
         q = (
-            "SELECT ticker, SUM(open_interest) AS oi FROM options_quotes "
-            "WHERE asof_date = ? AND ticker IN ({}) GROUP BY ticker"
+            "SELECT ticker, SUM(open_interest) AS oi, COUNT(open_interest) AS oi_rows, COUNT(*) AS rows "
+            "FROM options_quotes WHERE asof_date = ? AND ticker IN ({}) GROUP BY ticker"
         ).format(",".join("?" * len(peers_list)))
         df = pd.read_sql_query(q, conn, params=[asof] + peers_list)
         if df.empty:
+            return self._fallback_equal(peers_list)
+        coverage = float(df["oi_rows"].sum()) / max(float(df["rows"].sum()), 1.0)
+        if coverage < 0.80 or set(df["ticker"].str.upper()) != set(peers_list):
+            logger.warning(
+                "Open-interest coverage %.1f%% is too sparse; using equal weights",
+                coverage * 100.0,
+            )
             return self._fallback_equal(peers_list)
         s = pd.Series(df["oi"].values, index=df["ticker"].str.upper())
         total = float(s.sum())

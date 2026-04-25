@@ -1,244 +1,195 @@
 from __future__ import annotations
+
 import tkinter as tk
 from tkinter import ttk
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+
+def _fmt(val, fmt=".4f", fallback="—") -> str:
+    try:
+        return format(float(val), fmt)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _pct(val, fallback="—") -> str:
+    try:
+        return f"{float(val) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return fallback
 
 
 class ParametersTab(ttk.Frame):
-    """Separate table views for each model's parameters."""
+    """Term structure summary: ATM vol, skew, curvature, fit quality per expiry."""
+
+    _COLS = ("DTE", "Expiry", "ATM Vol", "Skew", "Curvature", "RMSE", "N")
+    _WIDTHS = (50, 100, 80, 80, 80, 80, 50)
 
     def __init__(self, master):
         super().__init__(master)
-        
-        # Meta information label
-        self.lbl_meta = ttk.Label(self, text="", anchor="w")
-        self.lbl_meta.pack(fill=tk.X, padx=4, pady=(4, 2))
 
-        # Create notebook for model tabs
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.lbl_meta = ttk.Label(self, text="", anchor="w", foreground="gray")
+        self.lbl_meta.pack(fill=tk.X, padx=6, pady=(6, 2))
 
-        # Initialize model tables
-        self.model_tables = {}
-        self._create_model_tables()
+        # ---- table ----
+        tbl_frame = ttk.Frame(self)
+        tbl_frame.pack(fill=tk.BOTH, expand=False, padx=6, pady=(0, 4))
 
-    def _create_model_tables(self):
-        """Create separate tables for each model."""
-        
-        # SABR Parameters Table
-        sabr_frame = ttk.Frame(self.notebook)
-        self.notebook.add(sabr_frame, text="SABR Parameters")
-        sabr_cols = ("Expiry", "alpha", "beta", "rho", "nu", "rmse", "n")
-        self.model_tables["SABR"] = self._create_table(sabr_frame, sabr_cols)
+        self.tree = ttk.Treeview(tbl_frame, columns=self._COLS,
+                                  show="headings", height=8, selectmode="browse")
+        vsb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
 
-        # SVI Parameters Table  
-        svi_frame = ttk.Frame(self.notebook)
-        self.notebook.add(svi_frame, text="SVI Parameters")
-        svi_cols = ("Expiry", "a", "b", "rho", "m", "sigma", "rmse", "n")
-        self.model_tables["SVI"] = self._create_table(svi_frame, svi_cols)
+        for col, w in zip(self._COLS, self._WIDTHS):
+            anchor = tk.W if col == "Expiry" else tk.E
+            self.tree.heading(col, text=col,
+                              command=lambda c=col: self._sort_by(c))
+            self.tree.column(col, anchor=anchor, width=w, stretch=(col == "Expiry"))
 
-        # Sensitivity Analysis Table
-        sens_frame = ttk.Frame(self.notebook)
-        self.notebook.add(sens_frame, text="Sensitivity Analysis")
-        sens_cols = ("Expiry", "atm_vol", "skew", "curv")
-        self.model_tables["Sensitivity"] = self._create_table(sens_frame, sens_cols)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-    def _create_table(self, parent, columns):
-        """Create a treeview table with given columns."""
-        tree_frame = ttk.Frame(parent)
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        # ---- term structure plot ----
+        self.fig, self.ax = plt.subplots(figsize=(5, 2.4))
+        self.fig.subplots_adjust(left=0.12, right=0.97, top=0.88, bottom=0.18)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
-        tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        # Configure columns
-        for col in columns:
-            tree.heading(col, text=col)
-            if col == "Expiry":
-                tree.column(col, anchor=tk.W, width=100, stretch=False)
-            else:
-                tree.column(col, anchor=tk.E, width=80, stretch=True)
-
-        tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        tree_frame.rowconfigure(0, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
-
-        return tree
+        self._sort_col: Optional[str] = None
+        self._sort_asc: bool = True
+        self._rows: list = []
 
     def update(self, info: Dict[str, Any] | None) -> None:
-        """Update tables with latest fit information."""
-        # Clear all tables
-        for tree in self.model_tables.values():
-            for item in tree.get_children():
-                tree.delete(item)
+        self._clear()
 
         if not info:
             self.lbl_meta.config(text="No fit data")
+            self._draw_empty()
             return
 
-        # Update meta information
-        parts = []
-        if info.get("ticker"):
-            parts.append(str(info["ticker"]))
-        if info.get("asof"):
-            parts.append(str(info["asof"]))
-        if info.get("current_expiry"):
-            parts.append(f"viewing expiry {info['current_expiry']}")
-        self.lbl_meta.config(text="  ".join(parts))
+        ticker = info.get("ticker", "")
+        asof = info.get("asof", "")
+        self.lbl_meta.config(text=f"{ticker}   {asof}" if ticker or asof else "")
 
-        # Process data by expiry
         fit_map = info.get("fit_by_expiry") if isinstance(info, dict) else None
-        if fit_map:
-            self._populate_from_fit_map(fit_map)
+        if not fit_map:
+            self._draw_empty()
+            return
+
+        rows = []
+        for T_val, entry in sorted(fit_map.items(), key=lambda kv: kv[0]):
+            dte = int(round(float(T_val) * 365.25))
+            expiry = entry.get("expiry") or ""
+            # expiry might be a full datetime string — keep date part only
+            if expiry and "T" in expiry:
+                expiry = expiry.split("T")[0]
+            elif expiry and " " in expiry:
+                expiry = expiry.split(" ")[0]
+
+            sens = entry.get("sens") or {}
+            atm_vol = sens.get("atm_vol")
+            skew = sens.get("skew")
+            curv = sens.get("curv")
+
+            # best available RMSE + N
+            rmse, n = None, None
+            for model_key in ("svi", "sabr", "tps"):
+                mp = entry.get(model_key) or {}
+                if mp.get("rmse") is not None:
+                    rmse = mp["rmse"]
+                    n = mp.get("n")
+                    break
+
+            rows.append({
+                "DTE": dte,
+                "Expiry": expiry,
+                "ATM Vol": atm_vol,
+                "Skew": skew,
+                "Curvature": curv,
+                "RMSE": rmse,
+                "N": n,
+            })
+
+        self._rows = rows
+        self._insert_rows(rows)
+        self._draw_chart(rows)
+
+    # ---- internals ----
+
+    def _clear(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self._rows = []
+
+    def _insert_rows(self, rows):
+        for r in rows:
+            self.tree.insert("", tk.END, values=(
+                r["DTE"],
+                r["Expiry"],
+                _pct(r["ATM Vol"]),
+                _pct(r["Skew"]),
+                _fmt(r["Curvature"], ".4f"),
+                _fmt(r["RMSE"], ".5f"),
+                str(r["N"]) if r["N"] is not None else "—",
+            ))
+
+    def _sort_by(self, col: str):
+        if self._sort_col == col:
+            self._sort_asc = not self._sort_asc
         else:
-            # Fallback: legacy single-expiry structure
-            self._populate_legacy_format(info)
+            self._sort_col = col
+            self._sort_asc = True
 
-    def _populate_from_fit_map(self, fit_map: Dict):
-        """Populate tables from fit_by_expiry structure."""
-        # Collect data by model
-        sabr_data = []
-        svi_data = []
-        sens_data = []
-
-        for T, models in sorted(fit_map.items(), key=lambda kv: kv[0]):
-            expiry = models.get("expiry") or str(T)
-            
-            # SABR parameters
-            if "sabr" in models:
-                sabr_params = models["sabr"]
-                sabr_row = [expiry]
-                for param in ["alpha", "beta", "rho", "nu", "rmse", "n"]:
-                    val = sabr_params.get(param, "")
-                    if val != "":
-                        try:
-                            val = f"{float(val):.6g}"
-                        except (ValueError, TypeError):
-                            val = str(val)
-                    sabr_row.append(val)
-                sabr_data.append(sabr_row)
-
-            # SVI parameters  
-            if "svi" in models:
-                svi_params = models["svi"]
-                svi_row = [expiry]
-                for param in ["a", "b", "rho", "m", "sigma", "rmse", "n"]:
-                    val = svi_params.get(param, "")
-                    if val != "":
-                        try:
-                            val = f"{float(val):.6g}"
-                        except (ValueError, TypeError):
-                            val = str(val)
-                    svi_row.append(val)
-                svi_data.append(svi_row)
-
-            # Sensitivity parameters
-            if "sens" in models:
-                sens_params = models["sens"]
-                sens_row = [expiry]
-                for param in ["atm_vol", "skew", "curv"]:
-                    val = sens_params.get(param, "")
-                    if val != "":
-                        try:
-                            val = f"{float(val):.6g}"
-                        except (ValueError, TypeError):
-                            val = str(val)
-                    sens_row.append(val)
-                sens_data.append(sens_row)
-
-        # Populate tables
-        for row in sabr_data:
-            self.model_tables["SABR"].insert("", tk.END, values=row)
-        for row in svi_data:
-            self.model_tables["SVI"].insert("", tk.END, values=row)
-        for row in sens_data:
-            self.model_tables["Sensitivity"].insert("", tk.END, values=row)
-
-    def _populate_legacy_format(self, info: Dict):
-        """Populate tables from legacy single-expiry format."""
-        expiry = info.get("expiry", "")
-
-        # SABR
-        if "sabr" in info:
-            sabr_params = info["sabr"]
-            sabr_row = [expiry]
-            for param in ["alpha", "beta", "rho", "nu", "rmse", "n"]:
-                val = sabr_params.get(param, "")
-                if val != "":
-                    try:
-                        val = f"{float(val):.6g}"
-                    except (ValueError, TypeError):
-                        val = str(val)
-                sabr_row.append(val)
-            self.model_tables["SABR"].insert("", tk.END, values=sabr_row)
-
-        # SVI
-        if "svi" in info:
-            svi_params = info["svi"]
-            svi_row = [expiry]
-            for param in ["a", "b", "rho", "m", "sigma", "rmse", "n"]:
-                val = svi_params.get(param, "")
-                if val != "":
-                    try:
-                        val = f"{float(val):.6g}"
-                    except (ValueError, TypeError):
-                        val = str(val)
-                svi_row.append(val)
-            self.model_tables["SVI"].insert("", tk.END, values=svi_row)
-
-        # Sensitivity
-        if "sens" in info:
-            sens_params = info["sens"]
-            sens_row = [expiry]
-            for param in ["atm_vol", "skew", "curv"]:
-                val = sens_params.get(param, "")
-                if val != "":
-                    try:
-                        val = f"{float(val):.6g}"
-                    except (ValueError, TypeError):
-                        val = str(val)
-                sens_row.append(val)
-            self.model_tables["Sensitivity"].insert("", tk.END, values=sens_row)
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("Model Parameters - Separated View")
-    root.geometry("800x600")
-
-    # Sample data structure
-    sample_data = {
-        "ticker": "SPX",
-        "asof": "2025-08-21",
-        "current_expiry": "2025-09-12",
-        "fit_by_expiry": {
-            "2025-09-05": {
-                "expiry": "2025-09-05",
-                "sabr": {"n": 80},
-                "sens": {"atm_vol": 0.286192, "skew": -0.0715535, "curv": 0.0119297}
-            },
-            "2025-09-12": {
-                "expiry": "2025-09-12", 
-                "sabr": {"alpha": 5, "beta": 0.5, "rho": -0.999, "nu": 1e-06, "rmse": 8.8257e-08, "n": 65},
-                "svi": {"a": 1e-12, "b": 0.102131, "rho": 0.0155951, "m": -0.00339881, "sigma": 0.061342, "rmse": 0.104224, "n": 65},
-                "sens": {"atm_vol": 0.286197, "skew": -0.071557, "curv": 0.0119322}
-            },
-            "2025-09-19": {
-                "expiry": "2025-09-19",
-                "sabr": {"alpha": 5, "beta": 0.5, "rho": -0.999, "nu": 1e-06, "rmse": 4.87367e-09, "n": 113},
-                "svi": {"a": 0.00302272, "b": 0.109041, "rho": -0.0111255, "m": -0.063805, "sigma": 1e-08, "rmse": 0.228105, "n": 113},
-                "sens": {"atm_vol": 0.286201, "skew": -0.0715805, "curv": 0.0119347}
-            }
+        key_map = {
+            "DTE": lambda r: r["DTE"],
+            "Expiry": lambda r: r["Expiry"] or "",
+            "ATM Vol": lambda r: float(r["ATM Vol"]) if r["ATM Vol"] is not None else -999,
+            "Skew": lambda r: float(r["Skew"]) if r["Skew"] is not None else -999,
+            "Curvature": lambda r: float(r["Curvature"]) if r["Curvature"] is not None else -999,
+            "RMSE": lambda r: float(r["RMSE"]) if r["RMSE"] is not None else 999,
+            "N": lambda r: int(r["N"]) if r["N"] is not None else -1,
         }
-    }
+        key = key_map.get(col, lambda r: 0)
+        sorted_rows = sorted(self._rows, key=key, reverse=not self._sort_asc)
+        self._clear_tree()
+        self._insert_rows(sorted_rows)
 
-    params_tab = ParametersTab(root)
-    params_tab.pack(fill=tk.BOTH, expand=True)
-    params_tab.update(sample_data)
+    def _clear_tree(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
 
-    root.mainloop()
+    def _draw_chart(self, rows):
+        self.ax.clear()
+        dtes = [r["DTE"] for r in rows if r["ATM Vol"] is not None]
+        vols = [float(r["ATM Vol"]) * 100 for r in rows if r["ATM Vol"] is not None]
+        skews = [float(r["Skew"]) * 100 for r in rows if r["Skew"] is not None]
+
+        if not dtes:
+            self._draw_empty()
+            return
+
+        self.ax.plot(dtes, vols, "o-", color="#1f77b4", lw=1.5, ms=5, label="ATM Vol %")
+
+        if len(skews) == len(dtes):
+            ax2 = self.ax.twinx()
+            ax2.plot(dtes, skews, "s--", color="#d62728", lw=1, ms=4, alpha=0.75, label="Skew %")
+            ax2.set_ylabel("Skew (%)", fontsize=7, color="#d62728")
+            ax2.tick_params(axis="y", labelsize=7, colors="#d62728")
+            ax2.axhline(0, color="#d62728", lw=0.5, alpha=0.4)
+
+        self.ax.set_xlabel("DTE (days)", fontsize=7)
+        self.ax.set_ylabel("ATM Vol (%)", fontsize=7, color="#1f77b4")
+        self.ax.tick_params(axis="both", labelsize=7)
+        self.ax.tick_params(axis="y", colors="#1f77b4")
+        self.ax.set_title("Term Structure", fontsize=8)
+
+        self.fig.canvas.draw_idle()
+
+    def _draw_empty(self):
+        self.ax.clear()
+        self.ax.set_title("No data", fontsize=8)
+        self.fig.canvas.draw_idle()

@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.spillover.vol_spillover import run_spillover
-from analysis.analysis_pipeline import get_daily_iv_for_spillover
+from analysis.analysis_pipeline import get_daily_iv_for_spillover, get_daily_hv_for_spillover
 
 try:
     from analysis.spillover.network_graph import build_spillover_digraph, compute_graph_metrics
@@ -57,12 +57,24 @@ class SpilloverFrame(ttk.Frame):
         self.ent_horizons.insert(0, "1,3,5")
         self.ent_horizons.grid(row=1, column=4, sticky=tk.W)
 
+        ttk.Label(ctrl, text="Mode:").grid(row=0, column=5, sticky=tk.W, padx=(8, 0))
+        self._mode_var = tk.StringVar(value="HV")
+        mode_cb = ttk.Combobox(ctrl, textvariable=self._mode_var,
+                               values=["IV", "HV"], state="readonly", width=4)
+        mode_cb.grid(row=0, column=6, sticky=tk.W)
+        mode_cb.bind("<<ComboboxSelected>>", self._on_mode_change)
+
+        ttk.Label(ctrl, text="HV window:").grid(row=1, column=5, sticky=tk.W, padx=(8, 0))
+        self.ent_hv_window = ttk.Entry(ctrl, width=5)
+        self.ent_hv_window.insert(0, "20")
+        self.ent_hv_window.grid(row=1, column=6, sticky=tk.W)
+
         btn = ttk.Button(ctrl, text="Run", command=self._run_async)
-        btn.grid(row=0, column=5, rowspan=2, padx=8)
+        btn.grid(row=0, column=7, rowspan=2, padx=8)
 
         self._status_var = tk.StringVar(value="")
         ttk.Label(ctrl, textvariable=self._status_var, foreground="gray").grid(
-            row=0, column=6, columnspan=2, sticky=tk.W
+            row=0, column=8, columnspan=2, sticky=tk.W
         )
 
         # ---- Paned area: tables top, plot bottom ----
@@ -161,6 +173,10 @@ class SpilloverFrame(ttk.Frame):
         """Called by BrowserApp when the target or peers change."""
         self._sync_from_browser()
 
+    def _on_mode_change(self, _=None):
+        state = tk.NORMAL if self._mode_var.get() == "HV" else tk.DISABLED
+        self.ent_hv_window.configure(state=state)
+
     # ---- Run ----
 
     def _run_async(self):
@@ -173,23 +189,32 @@ class SpilloverFrame(ttk.Frame):
             thr = float(self.ent_threshold.get()) / 100.0
             lookback = int(self.ent_lookback.get())
             horizons = [int(h) for h in self.ent_horizons.get().split(",") if h.strip()]
+            hv_window = int(self.ent_hv_window.get())
         except ValueError:
             messagebox.showerror("Input error", "Invalid numeric input")
             return
 
-        self._status_var.set("Loading IV data…")
+        mode = self._mode_var.get()
+        self._status_var.set(f"Loading {mode} data…")
 
         def worker():
             try:
-                df = get_daily_iv_for_spillover(tickers)
+                if mode == "HV":
+                    df = get_daily_hv_for_spillover(tickers, hv_window=hv_window)
+                    no_data_msg = (
+                        "No underlying price data found for the selected tickers.\n"
+                        "Download data first via the Parameter Explorer tab."
+                    )
+                else:
+                    df = get_daily_iv_for_spillover(tickers)
+                    no_data_msg = (
+                        "No ATM IV data found for the selected tickers.\n"
+                        "Download data first via the Parameter Explorer tab."
+                    )
                 if df.empty:
                     self.after(0, lambda: (
                         self._status_var.set(""),
-                        messagebox.showerror(
-                            "No data",
-                            "No ATM IV data found for the selected tickers.\n"
-                            "Download data first via the Parameter Explorer tab.",
-                        ),
+                        messagebox.showerror("No data", no_data_msg),
                     ))
                     return
 
@@ -217,9 +242,9 @@ class SpilloverFrame(ttk.Frame):
                 self.after(0, update)
 
             except Exception as exc:
-                self.after(0, lambda: (
+                self.after(0, lambda e=exc: (
                     self._status_var.set(""),
-                    messagebox.showerror("Spillover error", str(exc)),
+                    messagebox.showerror("Spillover error", str(e)),
                 ))
 
         threading.Thread(target=worker, daemon=True).start()

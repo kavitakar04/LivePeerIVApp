@@ -23,6 +23,12 @@ from .interest_rates import (
 )
 from .greeks import compute_all_greeks_df
 from .underlying_prices import update_underlying_prices
+from .quote_quality import (
+    STORE_MAX_MONEYNESS,
+    STORE_MIN_MONEYNESS,
+    filter_quotes,
+    normalize_market_fields,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -184,6 +190,22 @@ def enrich_quotes(
     df["moneyness"] = df["K"] / df["S"]
     df["log_moneyness"] = np.log(df["moneyness"])
 
+    # Normalize market fields before Greeks/persistence. Crossed markets are
+    # removed below via the shared quality filter.
+    cleaned_market = df.apply(
+        lambda row: normalize_market_fields(
+            row.get("bid_raw"),
+            row.get("ask_raw"),
+            mid=None,
+            last=row.get("last_raw"),
+        ),
+        axis=1,
+        result_type="expand",
+    )
+    cleaned_market.columns = ["bid_raw", "ask_raw", "mid", "_market_quality_reason"]
+    for col in cleaned_market.columns:
+        df[col] = cleaned_market[col]
+
     # Compute Greeks in bulk (adds: price, delta, gamma, vega, theta, rho, d1, d2)
     # Uses ticker-specific rates if available, falls back to provided r
     df = compute_all_greeks_df(df, r=r, q=q, use_ticker_rates=True)
@@ -205,9 +227,13 @@ def enrich_quotes(
     df.loc[atm_idx.to_numpy(), "is_atm"] = 1
     df = df.drop(columns="_atm_dist")
 
-    # Light sanity filters (tune later)
-    df = df[(df["sigma"] > 0.01) & (df["sigma"] < 2.0)]
-    df = df[(df["moneyness"] > 0.1) & (df["moneyness"] < 10.0)]
+    # Shared store-quality filters. Analytics can apply tighter bounds later.
+    df = filter_quotes(
+        df,
+        min_moneyness=STORE_MIN_MONEYNESS,
+        max_moneyness=STORE_MAX_MONEYNESS,
+        require_uncrossed=True,
+    )
 
     # Keep expiries with enough quotes per CP
     counts = df.groupby(["ticker", "expiry", "call_put"]).size()
@@ -225,7 +251,7 @@ def enrich_quotes(
     cols = [
         "asof_date", "ticker", "expiry", "K", "call_put",
         "sigma", "S", "T", "moneyness", "log_moneyness", "delta", "is_atm",
-        "volume_raw", "open_interest_raw", "bid_raw", "ask_raw", "last_raw",
+        "volume_raw", "open_interest_raw", "bid_raw", "ask_raw", "mid", "last_raw",
         "r", "q", "price", "gamma", "vega", "theta", "rho", "d1", "d2",
         "vendor"
     ]

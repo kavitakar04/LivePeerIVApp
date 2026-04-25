@@ -7,6 +7,11 @@ import numpy as np
 
 # For ATM pillars synthetic IV
 from data.db_utils import get_conn
+from data.quote_quality import (
+    ANALYTICS_MAX_MONEYNESS,
+    ANALYTICS_MIN_MONEYNESS,
+    filter_quotes,
+)
 from analysis.pillars import load_atm, nearest_pillars
 
 
@@ -64,6 +69,14 @@ def build_surface_grids(
         return {}
 
     df = df.dropna(subset=["iv", "ttm_years", "moneyness"]).copy()
+    df = filter_quotes(
+        df,
+        min_moneyness=ANALYTICS_MIN_MONEYNESS,
+        max_moneyness=ANALYTICS_MAX_MONEYNESS,
+        require_uncrossed=False,
+    )
+    if df.empty:
+        return {}
     df["ttm_days"] = df["ttm_years"] * 365.25
 
     # Limit number of expiries if requested

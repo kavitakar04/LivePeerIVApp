@@ -1,0 +1,1169 @@
+{
+  "generated_at": "2026-04-25T01:11:26.477607+00:00",
+  "root": "/Users/kavitakar/LivePeerIVApp",
+  "raw_db": {
+    "path": "/Users/kavitakar/LivePeerIVApp/data/iv_data.db",
+    "exists": true,
+    "size_bytes": 36933632,
+    "quick_check": "ok",
+    "tables": [
+      "calc_cache",
+      "interest_rates",
+      "options_quotes",
+      "ticker_groups",
+      "ticker_interest_rates",
+      "underlying_prices"
+    ],
+    "table_counts": {
+      "calc_cache": 0,
+      "interest_rates": 5,
+      "options_quotes": 97299,
+      "ticker_groups": 7,
+      "ticker_interest_rates": 4998,
+      "underlying_prices": 15666
+    },
+    "schemas": {
+      "calc_cache": [
+        {
+          "cid": 0,
+          "name": "key",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "value",
+          "type": "BLOB",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "notnull": 0,
+          "dflt_value": "CURRENT_TIMESTAMP",
+          "pk": 0
+        }
+      ],
+      "interest_rates": [
+        {
+          "cid": 0,
+          "name": "rate_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "rate_value",
+          "type": "REAL",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "description",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "is_default",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": "0",
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "options_quotes": [
+        {
+          "cid": 0,
+          "name": "asof_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "ticker",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "expiry",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3
+        },
+        {
+          "cid": 3,
+          "name": "strike",
+          "type": "REAL",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 4
+        },
+        {
+          "cid": 4,
+          "name": "call_put",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 5
+        },
+        {
+          "cid": 5,
+          "name": "iv",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "spot",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "ttm_years",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "moneyness",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "log_moneyness",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "delta",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "is_atm",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 12,
+          "name": "volume",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 13,
+          "name": "bid",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 14,
+          "name": "ask",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 15,
+          "name": "mid",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 16,
+          "name": "vendor",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": "'yfinance'",
+          "pk": 6
+        },
+        {
+          "cid": 17,
+          "name": "price",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 18,
+          "name": "gamma",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 19,
+          "name": "vega",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 20,
+          "name": "theta",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 21,
+          "name": "rho",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 22,
+          "name": "d1",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 23,
+          "name": "d2",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 24,
+          "name": "r",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 25,
+          "name": "q",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 26,
+          "name": "open_interest",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "ticker_groups": [
+        {
+          "cid": 0,
+          "name": "group_name",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "target_ticker",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "peer_tickers",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "description",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "ticker_interest_rates": [
+        {
+          "cid": 0,
+          "name": "ticker",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "rate_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "rate_value",
+          "type": "REAL",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "fee",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "adjusted_float",
+          "type": "REAL",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "lender_count",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "borrow_status",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "source_file",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "underlying_prices": [
+        {
+          "cid": 0,
+          "name": "asof_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "ticker",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "close",
+          "type": "REAL",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ]
+    },
+    "options_summary": {
+      "rows": 97299,
+      "tickers": 46,
+      "asof_dates": 9,
+      "min_asof": "2025-08-12",
+      "max_asof": "2026-04-25",
+      "vendors": [
+        {
+          "vendor": "yfinance",
+          "rows": 97299
+        }
+      ]
+    },
+    "nulls": {
+      "iv_null": 0,
+      "spot_null": 0,
+      "ttm_null": 0,
+      "moneyness_null": 0,
+      "bid_null": 66520,
+      "ask_null": 66335,
+      "open_interest_null": 66727,
+      "delta_null": 0
+    },
+    "bad_counts": {
+      "bad_iv": 0,
+      "bad_spot": 0,
+      "bad_strike": 0,
+      "bad_ttm": 0,
+      "bad_moneyness": 0,
+      "bad_bid": 0,
+      "bad_ask": 0,
+      "crossed_market": 0,
+      "mid_outside_market": 0,
+      "bad_volume": 0,
+      "bad_open_interest": 0
+    },
+    "ticker_coverage": [
+      {
+        "ticker": "SPY",
+        "rows": 9582,
+        "asof_dates": 6,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 28,
+        "iv_rows": 9582,
+        "atm_share": 0.0101
+      },
+      {
+        "ticker": "QQQ",
+        "rows": 8197,
+        "asof_dates": 6,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 28,
+        "iv_rows": 8197,
+        "atm_share": 0.0116
+      },
+      {
+        "ticker": "UNH",
+        "rows": 6170,
+        "asof_dates": 6,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 25,
+        "iv_rows": 6170,
+        "atm_share": 0.0196
+      },
+      {
+        "ticker": "TQQQ",
+        "rows": 5104,
+        "asof_dates": 6,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 17,
+        "iv_rows": 5104,
+        "atm_share": 0.0182
+      },
+      {
+        "ticker": "GS",
+        "rows": 4541,
+        "asof_dates": 4,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-18",
+        "expiries": 15,
+        "iv_rows": 4541,
+        "atm_share": 0.0172
+      },
+      {
+        "ticker": "IWM",
+        "rows": 4530,
+        "asof_dates": 6,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 26,
+        "iv_rows": 4530,
+        "atm_share": 0.0196
+      },
+      {
+        "ticker": "XLK",
+        "rows": 3443,
+        "asof_dates": 6,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 20,
+        "iv_rows": 3443,
+        "atm_share": 0.0299
+      },
+      {
+        "ticker": "NVDA",
+        "rows": 3310,
+        "asof_dates": 3,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-15",
+        "expiries": 12,
+        "iv_rows": 3310,
+        "atm_share": 0.0124
+      },
+      {
+        "ticker": "ELV",
+        "rows": 3281,
+        "asof_dates": 6,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 14,
+        "iv_rows": 3281,
+        "atm_share": 0.0277
+      },
+      {
+        "ticker": "JPM",
+        "rows": 2772,
+        "asof_dates": 4,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-18",
+        "expiries": 15,
+        "iv_rows": 2772,
+        "atm_share": 0.0274
+      },
+      {
+        "ticker": "HUM",
+        "rows": 2759,
+        "asof_dates": 5,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 24,
+        "iv_rows": 2759,
+        "atm_share": 0.0312
+      },
+      {
+        "ticker": "MSTR",
+        "rows": 2601,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 2601,
+        "atm_share": 0.0088
+      },
+      {
+        "ticker": "CVS",
+        "rows": 2522,
+        "asof_dates": 6,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 24,
+        "iv_rows": 2522,
+        "atm_share": 0.0476
+      },
+      {
+        "ticker": "CI",
+        "rows": 2494,
+        "asof_dates": 6,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 22,
+        "iv_rows": 2494,
+        "atm_share": 0.0469
+      },
+      {
+        "ticker": "AMD",
+        "rows": 2429,
+        "asof_dates": 3,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-15",
+        "expiries": 12,
+        "iv_rows": 2429,
+        "atm_share": 0.0185
+      },
+      {
+        "ticker": "AVGO",
+        "rows": 2255,
+        "asof_dates": 3,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-15",
+        "expiries": 12,
+        "iv_rows": 2255,
+        "atm_share": 0.0195
+      },
+      {
+        "ticker": "XLF",
+        "rows": 2143,
+        "asof_dates": 4,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-18",
+        "expiries": 15,
+        "iv_rows": 2143,
+        "atm_share": 0.0359
+      },
+      {
+        "ticker": "MS",
+        "rows": 2069,
+        "asof_dates": 4,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-18",
+        "expiries": 15,
+        "iv_rows": 2069,
+        "atm_share": 0.0367
+      },
+      {
+        "ticker": "BAC",
+        "rows": 1961,
+        "asof_dates": 4,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-18",
+        "expiries": 15,
+        "iv_rows": 1961,
+        "atm_share": 0.0382
+      },
+      {
+        "ticker": "WFC",
+        "rows": 1940,
+        "asof_dates": 4,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-18",
+        "expiries": 15,
+        "iv_rows": 1940,
+        "atm_share": 0.0402
+      },
+      {
+        "ticker": "SMH",
+        "rows": 1904,
+        "asof_dates": 3,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-15",
+        "expiries": 12,
+        "iv_rows": 1904,
+        "atm_share": 0.0242
+      },
+      {
+        "ticker": "TSM",
+        "rows": 1695,
+        "asof_dates": 3,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-15",
+        "expiries": 12,
+        "iv_rows": 1695,
+        "atm_share": 0.0271
+      },
+      {
+        "ticker": "RGTI",
+        "rows": 1411,
+        "asof_dates": 2,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 25,
+        "iv_rows": 1411,
+        "atm_share": 0.0354
+      },
+      {
+        "ticker": "OSCR",
+        "rows": 1403,
+        "asof_dates": 3,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 22,
+        "iv_rows": 1403,
+        "atm_share": 0.0428
+      },
+      {
+        "ticker": "IONQ",
+        "rows": 1396,
+        "asof_dates": 2,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 24,
+        "iv_rows": 1396,
+        "atm_share": 0.0344
+      },
+      {
+        "ticker": "META",
+        "rows": 1349,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 6,
+        "iv_rows": 1349,
+        "atm_share": 0.0089
+      },
+      {
+        "ticker": "INTC",
+        "rows": 1300,
+        "asof_dates": 3,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-15",
+        "expiries": 12,
+        "iv_rows": 1300,
+        "atm_share": 0.0354
+      },
+      {
+        "ticker": "SMCI",
+        "rows": 1293,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 1293,
+        "atm_share": 0.017
+      },
+      {
+        "ticker": "BMNR",
+        "rows": 1291,
+        "asof_dates": 2,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 1291,
+        "atm_share": 0.0364
+      },
+      {
+        "ticker": "QBTS",
+        "rows": 1267,
+        "asof_dates": 2,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 21,
+        "iv_rows": 1267,
+        "atm_share": 0.0339
+      },
+      {
+        "ticker": "CNC",
+        "rows": 1251,
+        "asof_dates": 3,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 22,
+        "iv_rows": 1251,
+        "atm_share": 0.0496
+      },
+      {
+        "ticker": "SBET",
+        "rows": 1116,
+        "asof_dates": 2,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-13",
+        "expiries": 10,
+        "iv_rows": 1116,
+        "atm_share": 0.0358
+      },
+      {
+        "ticker": "MOH",
+        "rows": 1108,
+        "asof_dates": 3,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 12,
+        "iv_rows": 1108,
+        "atm_share": 0.0343
+      },
+      {
+        "ticker": "QUBT",
+        "rows": 829,
+        "asof_dates": 2,
+        "min_asof": "2025-08-12",
+        "max_asof": "2026-04-25",
+        "expiries": 19,
+        "iv_rows": 829,
+        "atm_share": 0.0483
+      },
+      {
+        "ticker": "MSFT",
+        "rows": 760,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 6,
+        "iv_rows": 760,
+        "atm_share": 0.0145
+      },
+      {
+        "ticker": "MARA",
+        "rows": 625,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 625,
+        "atm_share": 0.0384
+      },
+      {
+        "ticker": "AAPL",
+        "rows": 510,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 6,
+        "iv_rows": 510,
+        "atm_share": 0.0235
+      },
+      {
+        "ticker": "BITO",
+        "rows": 491,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 491,
+        "atm_share": 0.0468
+      },
+      {
+        "ticker": "AMZN",
+        "rows": 485,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 6,
+        "iv_rows": 485,
+        "atm_share": 0.0268
+      },
+      {
+        "ticker": "GOOGL",
+        "rows": 430,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 6,
+        "iv_rows": 430,
+        "atm_share": 0.0279
+      },
+      {
+        "ticker": "CLOV",
+        "rows": 338,
+        "asof_dates": 3,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 19,
+        "iv_rows": 338,
+        "atm_share": 0.1243
+      },
+      {
+        "ticker": "WULF",
+        "rows": 261,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 261,
+        "atm_share": 0.0843
+      },
+      {
+        "ticker": "ALHC",
+        "rows": 241,
+        "asof_dates": 3,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 12,
+        "iv_rows": 241,
+        "atm_share": 0.1577
+      },
+      {
+        "ticker": "OPEN",
+        "rows": 216,
+        "asof_dates": 1,
+        "min_asof": "2025-08-13",
+        "max_asof": "2025-08-13",
+        "expiries": 12,
+        "iv_rows": 216,
+        "atm_share": 0.1065
+      },
+      {
+        "ticker": "PGNY",
+        "rows": 128,
+        "asof_dates": 3,
+        "min_asof": "2025-08-15",
+        "max_asof": "2026-04-25",
+        "expiries": 8,
+        "iv_rows": 128,
+        "atm_share": 0.1797
+      },
+      {
+        "ticker": "ARQQ",
+        "rows": 98,
+        "asof_dates": 1,
+        "min_asof": "2025-08-12",
+        "max_asof": "2025-08-12",
+        "expiries": 4,
+        "iv_rows": 98,
+        "atm_share": 0.0816
+      }
+    ],
+    "ticker_date_gaps": [],
+    "duplicate_pk_groups": [],
+    "sample_bad_rows": [],
+    "underlying_summary": {
+      "rows": 15666,
+      "tickers": 49,
+      "min_asof": "2024-08-19",
+      "max_asof": "2026-04-24",
+      "bad_close": 0
+    },
+    "calc_cache_summary": {
+      "rows": 0,
+      "sample_keys": []
+    }
+  },
+  "calc_db": {
+    "path": "/Users/kavitakar/LivePeerIVApp/data/calculations.db",
+    "exists": true,
+    "size_bytes": 69632,
+    "quick_check": "ok",
+    "tables": [
+      "calc_cache"
+    ],
+    "table_counts": {
+      "calc_cache": 2
+    },
+    "schemas": {
+      "calc_cache": [
+        {
+          "cid": 0,
+          "name": "key",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "artifact",
+          "type": "BLOB",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "created_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "expires_at",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "version",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "meta_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ]
+    }
+  },
+  "files": {
+    "files": [
+      {
+        "path": "data/ML_Rates/ML_aug06.csv",
+        "size_bytes": 4912307,
+        "suffix": ".csv",
+        "rows": 119580,
+        "columns": [
+          "Fee",
+          "Stock",
+          "Rate",
+          "Adjusted Float",
+          "Lender Count",
+          "Borrow Status",
+          "Last Rate",
+          "Change in Rate",
+          "Firm Long",
+          "Firm Short",
+          "Intrafirm?",
+          "Close Price"
+        ],
+        "null_cells": 688691
+      },
+      {
+        "path": "data/ML_Rates/ML_aug08.csv",
+        "size_bytes": 4921122,
+        "suffix": ".csv",
+        "rows": 119808,
+        "columns": [
+          "Fee",
+          "Stock",
+          "Rate",
+          "Adjusted Float",
+          "Lender Count",
+          "Borrow Status",
+          "Last Rate",
+          "Change in Rate",
+          "Firm Long",
+          "Firm Short",
+          "Intrafirm?",
+          "Close Price"
+        ],
+        "null_cells": 690017
+      },
+      {
+        "path": "data/calculations.db",
+        "size_bytes": 69632,
+        "suffix": ".db"
+      },
+      {
+        "path": "data/iv_data.db",
+        "size_bytes": 36933632,
+        "suffix": ".db"
+      },
+      {
+        "path": "data/model_params.parquet",
+        "size_bytes": 17304,
+        "suffix": ".parquet",
+        "rows": 1350,
+        "columns": [
+          "asof_date",
+          "ticker",
+          "expiry",
+          "tenor_d",
+          "model",
+          "param",
+          "value",
+          "fit_meta"
+        ],
+        "null_cells": 0
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "medium",
+      "area": "market_fields",
+      "message": "bid_null: 66,520 rows (68.4%); OI/liquidity-weighted paths may be unreliable"
+    },
+    {
+      "severity": "medium",
+      "area": "market_fields",
+      "message": "ask_null: 66,335 rows (68.2%); OI/liquidity-weighted paths may be unreliable"
+    },
+    {
+      "severity": "medium",
+      "area": "market_fields",
+      "message": "open_interest_null: 66,727 rows (68.6%); OI/liquidity-weighted paths may be unreliable"
+    },
+    {
+      "severity": "high",
+      "area": "coverage",
+      "message": "12 tickers have only one as-of date; time-series/spillover/correlation history is weak"
+    },
+    {
+      "severity": "medium",
+      "area": "coverage",
+      "message": "26 tickers are stale versus latest as-of 2026-04-25"
+    },
+    {
+      "severity": "medium",
+      "area": "atm_flags",
+      "message": "13 tickers have <2% rows flagged ATM; do not rely on persisted is_atm alone"
+    }
+  ]
+}

@@ -72,7 +72,20 @@ PLOT_ID: dict[str, str] = {
 
 def plot_id(label: str) -> str:
     """Return the stable routing ID for a display label."""
-    return PLOT_ID.get(label, label)
+    if label in PLOT_ID:
+        return PLOT_ID[label]
+    text = str(label or "")
+    if text.startswith("Smile"):
+        return "smile"
+    if text.startswith("Term"):
+        return "term"
+    if text.startswith("Relative Weight Matrix"):
+        return "corr_matrix"
+    if text.startswith("Synthetic Surface"):
+        return "synthetic_surface"
+    if text.startswith("ETF Weights"):
+        return "etf_weights"
+    return text
 
 
 def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
@@ -482,7 +495,7 @@ class InputPanel(ttk.Frame):
             pillars = self.get_pillars()
 
             feature_scope = _derive_feature_scope(plot_type, feature_mode)
-            if plot_type.startswith("Relative Weight Matrix") and feature_mode in ("iv_atm", "ul"):
+            if plot_id(plot_type) == "corr_matrix" and feature_mode in ("iv_atm", "ul"):
                 feature_scope = "term" if len(pillars) >= 2 else "smile"
 
             self.manager.update(

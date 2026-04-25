@@ -15,16 +15,16 @@ if str(ROOT) not in sys.path:
 from display.plotting.correlation_detail_plot import plot_correlation_details
 
 
-def test_data_quality_message_outside_axes():
+def test_coverage_summary_outside_axes():
     corr_df = pd.DataFrame(
         [[1.0, np.nan], [np.nan, 1.0]], columns=["A", "B"], index=["A", "B"]
     )
     fig, ax = plt.subplots()
     plot_correlation_details(ax, corr_df, show_values=False)
-    # Find text artist created for data quality and ensure it's above the axes
+    # Find text artist created for matrix coverage and ensure it's above the axes
     found = False
     for txt in ax.texts:
-        if "data quality" in txt.get_text().lower():
+        if "finite cells" in txt.get_text().lower():
             found = True
             assert txt.get_position()[1] > 1.0
     assert found
@@ -38,6 +38,7 @@ def test_weight_legend_separate_axis():
     fig, ax = plt.subplots()
     plot_correlation_details(ax, corr_df, weights=weights, show_values=False)
     assert hasattr(ax.figure, "_corr_weight_ax")
-    legend_ax = ax.figure._corr_weight_ax
-    # Ensure legend axis sits to the right of the main plot
-    assert legend_ax.get_position().x0 >= ax.get_position().x1
+    weight_ax = ax.figure._corr_weight_ax
+    # Ensure weight axis sits to the right of the main plot
+    assert weight_ax.get_position().x0 >= ax.get_position().x1
+    assert "Peer Weights" in weight_ax.get_title()
