@@ -474,6 +474,40 @@ def available_dates(ticker: Optional[str] = None, most_recent_only: bool = False
     return df["asof_date"].tolist()
 
 
+def get_daily_iv_for_spillover(
+    tickers: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    """Return daily ATM IV per (date, ticker) for the spillover engine.
+
+    Queries the options_quotes table directly — no parquet file needed.
+    Returns a DataFrame with columns: date (datetime), ticker (str), atm_iv (float).
+    """
+    conn = _get_ro_conn()
+    sql = (
+        "SELECT asof_date AS date, ticker, AVG(iv) AS atm_iv "
+        "FROM options_quotes "
+        "WHERE is_atm = 1 AND iv IS NOT NULL AND iv > 0"
+    )
+    params: list = []
+    if tickers:
+        placeholders = ",".join("?" * len(tickers))
+        sql += f" AND ticker IN ({placeholders})"
+        params.extend([t.upper() for t in tickers])
+    if start_date:
+        sql += " AND asof_date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND asof_date <= ?"
+        params.append(end_date)
+    sql += " GROUP BY asof_date, ticker ORDER BY ticker, asof_date"
+
+    df = pd.read_sql_query(sql, conn, params=params if params else None)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
 def invalidate_cache() -> None:
     """Clear cached ticker/date queries and reset shared connection."""
     clear_all_caches()
@@ -708,13 +742,15 @@ def prepare_smile_data(
                 use_atm_only=False,
                 max_expiries=max_expiries,
             )
-            if target in surfaces and asof in surfaces[target]:
-                tgt_surface = surfaces[target][asof]
+            # build_surface_grids stores keys as pd.Timestamp; normalise to match.
+            asof_ts = pd.Timestamp(asof).normalize()
+            if target in surfaces and asof_ts in surfaces[target]:
+                tgt_surface = surfaces[target][asof_ts]
             peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
             if peer_surfaces:
                 w = {p: float(weights.get(p, 1.0)) for p in peer_surfaces} if weights else {p: 1.0 for p in peer_surfaces}
                 synth_by_date = combine_surfaces(peer_surfaces, w)
-                syn_surface = synth_by_date.get(asof)
+                syn_surface = synth_by_date.get(asof_ts)
         except Exception:
             tgt_surface = None
             syn_surface = None

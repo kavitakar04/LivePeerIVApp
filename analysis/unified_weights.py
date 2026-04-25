@@ -173,8 +173,10 @@ def surface_feature_matrix(
     """Rows=tickers, cols=flattened (tenor × moneyness) grid for a single as-of date."""
     from analysis.syntheticETFBuilder import build_surface_grids  # Delayed import
 
+    # build_surface_grids keys dates as pd.Timestamp; normalise asof to match.
+    asof_ts = pd.Timestamp(asof).normalize()
     req = [t.upper() for t in tickers]
-    logger.debug("Building surface grids for %s on %s", req, asof)
+    logger.debug("Building surface grids for %s on %s", req, asof_ts)
     grids = build_surface_grids(
         tickers=req,
         tenors=tenors,
@@ -182,7 +184,7 @@ def surface_feature_matrix(
         use_atm_only=False,
     )
     if not grids:
-        logger.debug("No surface grids returned for %s on %s", req, asof)
+        logger.debug("No surface grids returned for %s on %s", req, asof_ts)
 
     feats: list[np.ndarray] = []
     ok: list[str] = []
@@ -192,15 +194,15 @@ def surface_feature_matrix(
         if t not in grids:
             logger.debug("Ticker %s missing from surface grids", t)
             continue
-        if asof not in grids[t]:
+        if asof_ts not in grids[t]:
             logger.debug(
                 "Ticker %s has no surface for %s (available=%s)",
                 t,
-                asof,
+                asof_ts,
                 sorted(grids[t].keys()),
             )
             continue
-        df = grids[t][asof]  # index=mny labels, columns=tenor (days)
+        df = grids[t][asof_ts]  # index=mny labels, columns=tenor (days)
         logger.debug("Ticker %s surface grid shape %s", t, df.shape)
         arr = df.to_numpy(float).T.reshape(-1)
         if feat_names is None:

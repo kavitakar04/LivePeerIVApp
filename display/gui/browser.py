@@ -104,7 +104,7 @@ class BrowserApp(tk.Tk):
         self.notebook.add(self.tab_params, text="Parameter Summary")
 
         # ---- Spillover tab ----
-        self.tab_spillover = SpilloverFrame(self.notebook)
+        self.tab_spillover = SpilloverFrame(self.notebook, input_panel=self.inputs)
         self.notebook.add(self.tab_spillover, text="Spillover")
 
         # Status bar for user feedback
@@ -174,6 +174,8 @@ class BrowserApp(tk.Tk):
             def update_ui():
                 self.inputs.set_dates(dates)
                 self.status.config(text="Ready")
+                if hasattr(self, "tab_spillover"):
+                    self.tab_spillover.on_browser_selection_changed()
 
             self.after(0, update_ui)
 
@@ -346,7 +348,7 @@ class BrowserApp(tk.Tk):
     def _open_spillover(self):
         """Open spillover analysis window."""
         if self.spill_win is None or not self.spill_win.winfo_exists():
-            self.spill_win = launch_spillover(self)
+            self.spill_win = launch_spillover(self, input_panel=self.inputs)
         else:
             self.spill_win.lift()
 
