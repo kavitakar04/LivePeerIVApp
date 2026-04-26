@@ -16,9 +16,9 @@ __all__ = [
     "sabr_confidence_bands",
     "tps_confidence_bands",
     "generate_term_structure_confidence_bands",
-    "synthetic_etf_confidence_bands",
-    "synthetic_etf_weight_bands",
-    "synthetic_etf_pillar_bands",
+    "peer_composite_confidence_bands",
+    "peer_composite_weight_bands",
+    "peer_composite_pillar_bands",
 ]
 
 @dataclass
@@ -222,9 +222,9 @@ def generate_term_structure_confidence_bands(
         return np.array([]), np.array([]), np.array([])
 
 # -----------------------------
-# Synthetic ETF specific confidence bands
+# Peer-composite specific confidence bands
 # -----------------------------
-def synthetic_etf_confidence_bands(
+def peer_composite_confidence_bands(
     surfaces: Dict[str, np.ndarray],
     weights: Dict[str, float],
     grid_K: np.ndarray,
@@ -234,7 +234,7 @@ def synthetic_etf_confidence_bands(
     surface_uncertainty: bool = True,
 ) -> Bands:
     """
-    Create confidence bands for synthetic ETF surfaces considering both
+    Create confidence bands for peer-composite surfaces considering both
     weight uncertainty and individual surface uncertainty.
     
     Parameters
@@ -242,7 +242,7 @@ def synthetic_etf_confidence_bands(
     surfaces : dict
         {ticker -> iv_array} where iv_array corresponds to grid_K
     weights : dict
-        {ticker -> weight} for the synthetic ETF combination
+        {ticker -> weight} for the peer-composite combination
     grid_K : np.ndarray
         Strike/moneyness grid for evaluation
     level : float
@@ -257,7 +257,7 @@ def synthetic_etf_confidence_bands(
     Returns
     -------
     Bands
-        Confidence bands for the synthetic ETF surface
+        Confidence bands for the peer-composite surface
     """
     grid_K = np.asarray(grid_K, float)
     tickers = list(surfaces.keys())
@@ -315,7 +315,7 @@ def synthetic_etf_confidence_bands(
     return Bands(x=grid_K, mean=baseline_synth, lo=lo, hi=hi, level=level)
 
 
-def synthetic_etf_weight_bands(
+def peer_composite_weight_bands(
     correlation_matrix: np.ndarray,
     target_idx: int,
     peer_indices: list,
@@ -323,7 +323,7 @@ def synthetic_etf_weight_bands(
     n_boot: int = 200,
 ) -> Dict[int, Bands]:
     """
-    Create confidence bands for synthetic ETF weights based on correlation uncertainty.
+    Create confidence bands for peer-composite weights based on correlation uncertainty.
     
     Parameters
     ----------
@@ -332,7 +332,7 @@ def synthetic_etf_weight_bands(
     target_idx : int
         Index of target ticker in correlation matrix
     peer_indices : list
-        Indices of peer tickers for synthetic ETF
+        Indices of peer tickers for peer-composite
     level : float
         Confidence level
     n_boot : int
@@ -400,7 +400,7 @@ def synthetic_etf_weight_bands(
     return result
 
 
-def synthetic_etf_pillar_bands(
+def peer_composite_pillar_bands(
     atm_data: Dict[str, np.ndarray],
     weights: Dict[str, float], 
     pillar_days: np.ndarray,
@@ -408,14 +408,14 @@ def synthetic_etf_pillar_bands(
     n_boot: int = 200,
 ) -> Bands:
     """
-    Create confidence bands for synthetic ETF ATM pillar curves.
+    Create confidence bands for peer-composite ATM pillar curves.
     
     Parameters
     ----------
     atm_data : dict
         {ticker -> atm_iv_array} where arrays correspond to pillar_days
     weights : dict
-        {ticker -> weight} for synthetic ETF combination
+        {ticker -> weight} for peer-composite combination
     pillar_days : np.ndarray
         Pillar tenor points (in days)
     level : float
@@ -426,7 +426,7 @@ def synthetic_etf_pillar_bands(
     Returns
     -------
     Bands
-        Confidence bands for synthetic ETF ATM curve
+        Confidence bands for peer-composite ATM curve
     """
     pillar_days = np.asarray(pillar_days, float)
     tickers = list(atm_data.keys())

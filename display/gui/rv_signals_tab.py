@@ -1,16 +1,15 @@
 """
 RV Signals tab for the main GUI browser.
 
-Displays a ranked, colour-coded table of relative-value dislocation
-signals for the currently selected target and peers.  Heavy computation
-runs in a background thread; the Treeview is updated on the Tk main
-thread via ``after()``.
+This tab is the final synthesis layer for relative-value research.  It turns
+target-vs-peer IV, model quality, spillover, and surface-comparability context
+into ranked trade theses rather than exposing a raw spread table.
 """
 
 from __future__ import annotations
 
-import threading
 import sys
+import threading
 from pathlib import Path
 
 import tkinter as tk
@@ -22,109 +21,157 @@ if str(ROOT) not in sys.path:
 
 
 _COLUMNS = (
-    "signal_type",
-    "T_days",
-    "value",
-    "synth_value",
+    "rank",
+    "opportunity",
+    "direction",
+    "feature",
+    "maturity",
     "spread",
     "z_score",
-    "pct_rank",
-    "description",
+    "percentile",
+    "confidence",
+    "event_context",
+    "spillover_support",
+    "data_quality",
+    "why",
 )
 
 _HEADERS = {
-    "signal_type": ("Type", 120),
-    "T_days":       ("T (d)", 60),
-    "value":        ("Target", 85),
-    "synth_value":  ("Synthetic", 85),
-    "spread":       ("Spread", 85),
-    "z_score":      ("Z-Score", 75),
-    "pct_rank":     ("Pct Rank", 75),
-    "description":  ("Description", 260),
+    "rank": ("Rank", 54),
+    "opportunity": ("Opportunity", 260),
+    "direction": ("Direction", 82),
+    "feature": ("Feature", 110),
+    "maturity": ("Maturity", 82),
+    "spread": ("Spread", 82),
+    "z_score": ("Z-Score", 82),
+    "percentile": ("Percentile", 86),
+    "confidence": ("Confidence", 94),
+    "event_context": ("Event Context", 118),
+    "spillover_support": ("Spillover Support", 170),
+    "data_quality": ("Data Quality", 105),
+    "why": ("Why", 380),
 }
 
 
 class RVSignalsFrame(ttk.Frame):
-    """Tab showing ranked RV signals for the current target/peers."""
+    """Ranked opportunity dashboard for the current target/peer group."""
 
     def __init__(self, master, input_panel=None, **kwargs):
         super().__init__(master, **kwargs)
         self._input_panel = input_panel
+        self._last_opportunities = None
         self._build_ui()
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
     def _build_ui(self):
-        # ---- Controls row ----
         ctrl = ttk.Frame(self)
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
 
-        ttk.Label(ctrl, text="Lookback (days):").grid(row=0, column=0, sticky="w")
+        ttk.Label(ctrl, text="Lookback").grid(row=0, column=0, sticky="w")
         self.ent_lookback = ttk.Entry(ctrl, width=6)
         self.ent_lookback.insert(0, "60")
-        self.ent_lookback.grid(row=0, column=1, padx=4)
+        self.ent_lookback.grid(row=0, column=1, padx=(4, 12))
 
-        ttk.Label(ctrl, text="Min |Z|:").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Label(ctrl, text="Min |Z|").grid(row=0, column=2, sticky="w")
         self.ent_min_z = ttk.Entry(ctrl, width=5)
         self.ent_min_z.insert(0, "1.0")
-        self.ent_min_z.grid(row=0, column=3, padx=4)
+        self.ent_min_z.grid(row=0, column=3, padx=(4, 12))
 
-        self.btn_refresh = ttk.Button(
-            ctrl, text="Refresh Signals", command=self._refresh
+        self.btn_refresh = ttk.Button(ctrl, text="Refresh Signals", command=self._refresh)
+        self.btn_refresh.grid(row=0, column=4, padx=(0, 12))
+
+        self.lbl_status = ttk.Label(ctrl, text="Press Refresh to synthesize RV opportunities.")
+        self.lbl_status.grid(row=0, column=5, sticky="w")
+        ctrl.columnconfigure(5, weight=1)
+
+        top = ttk.Frame(self)
+        top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
+        top.columnconfigure(0, weight=3)
+        top.columnconfigure(1, weight=4)
+
+        summary_box = ttk.LabelFrame(top, text="Executive Summary")
+        summary_box.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        self.summary_text = tk.Text(
+            summary_box,
+            height=6,
+            wrap="word",
+            relief="flat",
+            background="#f7f8fa",
+            padx=8,
+            pady=6,
         )
-        self.btn_refresh.grid(row=0, column=4, padx=8)
+        self.summary_text.pack(fill=tk.BOTH, expand=True)
+        self.summary_text.configure(state=tk.DISABLED)
 
-        self.lbl_status = ttk.Label(ctrl, text="Press Refresh to compute signals.")
-        self.lbl_status.grid(row=0, column=5, padx=8, sticky="w")
+        cards = ttk.LabelFrame(top, text="Context")
+        cards.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        self.card_labels: dict[str, ttk.Label] = {}
+        card_specs = [
+            ("strongest_dislocation", "Strongest dislocation"),
+            ("most_tradeable", "Most tradeable"),
+            ("most_systemic", "Most systemic"),
+            ("weakest_signal", "Weakest / least reliable"),
+            ("data_quality_warnings", "Data-quality warnings"),
+        ]
+        for i, (key, title) in enumerate(card_specs):
+            frame = ttk.Frame(cards, padding=(6, 4))
+            frame.grid(row=i // 2, column=i % 2, sticky="ew", padx=4, pady=3)
+            ttk.Label(frame, text=title).pack(anchor="w")
+            value = ttk.Label(frame, text="Unavailable", wraplength=310, foreground="#333333")
+            value.pack(anchor="w", fill=tk.X)
+            self.card_labels[key] = value
+        cards.columnconfigure(0, weight=1)
+        cards.columnconfigure(1, weight=1)
 
-        # ---- Legend ----
-        legend_frame = ttk.Frame(self)
-        legend_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 2))
-        tk.Label(legend_frame, text="  Rich (z>1.5) ", bg="#ffe8e8", relief="solid",
-                 bd=1, padx=4).pack(side=tk.LEFT)
-        tk.Label(legend_frame, text="  Cheap (z<−1.5) ", bg="#e8f0ff", relief="solid",
-                 bd=1, padx=4).pack(side=tk.LEFT, padx=(4, 0))
-        tk.Label(legend_frame, text="  Neutral / no z ", bg="#f5f5f5", relief="solid",
-                 bd=1, padx=4).pack(side=tk.LEFT, padx=(4, 0))
+        main = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        main.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
-        # ---- Treeview ----
-        tree_frame = ttk.Frame(self)
-        tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=4)
+        table_frame = ttk.Frame(main)
+        main.add(table_frame, weight=3)
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
 
-        self.tree = ttk.Treeview(
-            tree_frame, columns=_COLUMNS, show="headings", selectmode="browse"
-        )
+        self.tree = ttk.Treeview(table_frame, columns=_COLUMNS, show="headings", selectmode="browse")
         for col in _COLUMNS:
             header, width = _HEADERS[col]
             self.tree.heading(col, text=header)
-            anchor = "w" if col in ("signal_type", "description") else "center"
-            self.tree.column(col, width=width, anchor=anchor, stretch=(col == "description"))
+            anchor = "w" if col in {"opportunity", "why", "spillover_support"} else "center"
+            self.tree.column(col, width=width, anchor=anchor, stretch=(col in {"opportunity", "why"}))
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
 
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.LEFT, fill=tk.Y)
-
-        # Colour tags
-        self.tree.tag_configure("rich",    background="#ffe8e8")
-        self.tree.tag_configure("cheap",   background="#e8f0ff")
+        self.tree.tag_configure("rich", background="#ffe8e8")
+        self.tree.tag_configure("cheap", background="#e8f0ff")
         self.tree.tag_configure("neutral", background="#f5f5f5")
+        self.tree.tag_configure("warning", background="#fff6d9")
+        self.tree.bind("<<TreeviewSelect>>", self._on_row_selected)
 
-    # ------------------------------------------------------------------
-    # Public callback (called by browser when selection changes)
-    # ------------------------------------------------------------------
+        detail = ttk.LabelFrame(main, text="Signal Detail")
+        main.add(detail, weight=2)
+        self.detail_text = tk.Text(detail, height=10, wrap="word", relief="flat", padx=8, pady=6)
+        self.detail_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        detail_vsb = ttk.Scrollbar(detail, orient="vertical", command=self.detail_text.yview)
+        self.detail_text.configure(yscrollcommand=detail_vsb.set)
+        detail_vsb.pack(side=tk.LEFT, fill=tk.Y)
+        self.detail_text.configure(state=tk.DISABLED)
+
     def on_browser_selection_changed(self):
         """Called by BrowserApp when target / peers change."""
-        # Silently clear the table so stale results are not shown
+        self._last_opportunities = None
+        self._clear_dashboard("Press Refresh to synthesize RV opportunities.")
+
+    def _clear_dashboard(self, status: str):
         for item in self.tree.get_children():
             self.tree.delete(item)
-        self.lbl_status.config(text="Press Refresh to compute signals.")
+        self._set_summary([])
+        self._set_detail("")
+        for label in self.card_labels.values():
+            label.config(text="Unavailable")
+        self.lbl_status.config(text=status)
 
-    # ------------------------------------------------------------------
-    # Refresh logic (background thread + Tk marshal)
-    # ------------------------------------------------------------------
     def _refresh(self):
         if self._input_panel is None:
             self.lbl_status.config(text="No input panel connected.")
@@ -132,19 +179,15 @@ class RVSignalsFrame(ttk.Frame):
 
         settings = self._input_panel.get_settings()
         target = (settings.get("target") or "").upper().strip()
-        peers = [
-            p.upper().strip()
-            for p in (settings.get("peers") or [])
-            if str(p).strip()
-        ]
+        peers = [p.upper().strip() for p in (settings.get("peers") or []) if str(p).strip()]
         asof = settings.get("asof")
-
         weight_method = settings.get("weight_method", "corr")
         feature_mode = settings.get("feature_mode", "iv_atm")
-        weight_mode = (
-            "oi" if weight_method == "oi"
-            else f"{weight_method}_{feature_mode}"
-        )
+        weight_mode = "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
+        try:
+            max_expiries = int(settings.get("max_expiries", 6) or 6)
+        except (TypeError, ValueError):
+            max_expiries = 6
 
         if not target or not peers or not asof:
             self.lbl_status.config(text="Set target, peers, and date first.")
@@ -160,81 +203,131 @@ class RVSignalsFrame(ttk.Frame):
         except (ValueError, tk.TclError):
             min_z = 1.0
 
-        self.lbl_status.config(text="Computing…")
+        self.lbl_status.config(text="Synthesizing opportunities...")
         self.btn_refresh.config(state=tk.DISABLED)
 
         def worker():
             try:
-                from analysis.rv_analysis import generate_rv_signals
-                signals = generate_rv_signals(
+                from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+                payload = generate_rv_opportunity_dashboard(
                     target=target,
                     peers=peers,
                     asof=asof,
                     weight_mode=weight_mode,
                     lookback=lookback,
+                    max_expiries=max_expiries,
                     min_abs_z=min_z,
                 )
-                count = len(signals) if signals is not None else 0
-                self.after(0, lambda: self._populate_table(signals))
-                self.after(
-                    0,
-                    lambda c=count: self.lbl_status.config(
-                        text=f"{c} signal(s) found."
-                    ),
-                )
+                self.after(0, lambda p=payload: self._populate_dashboard(p))
             except Exception as exc:
                 msg = str(exc)
-                self.after(
-                    0,
-                    lambda m=msg: self.lbl_status.config(text=f"Error: {m}"),
-                )
+                self.after(0, lambda m=msg: self.lbl_status.config(text=f"Error: {m}"))
             finally:
                 self.after(0, lambda: self.btn_refresh.config(state=tk.NORMAL))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ------------------------------------------------------------------
-    # Table population
-    # ------------------------------------------------------------------
-    def _populate_table(self, signals_df):
-        """Update the Treeview from the signals DataFrame on the main thread."""
+    def _populate_dashboard(self, payload):
         import numpy as np
         import pandas as pd
+
+        opportunities = payload.get("opportunities")
+        self._last_opportunities = opportunities
+        self._set_summary(payload.get("executive_summary") or [])
+
+        cards = payload.get("context_cards") or {}
+        for key, label in self.card_labels.items():
+            label.config(text=str(cards.get(key, "Unavailable")))
 
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        if signals_df is None or signals_df.empty:
+        if opportunities is None or opportunities.empty:
             self.tree.insert(
                 "", "end",
-                values=("No signals", "", "", "", "", "", "", "Insufficient data"),
+                values=("", "No opportunities", "", "", "", "", "", "", "", "", "", "", "Insufficient data or no threshold breach."),
                 tags=("neutral",),
             )
+            warnings = payload.get("warnings") or []
+            self._set_detail("\n".join(warnings) if warnings else "No selected signal.")
+            self.lbl_status.config(text="No opportunity theses found.")
             return
 
-        for _, row in signals_df.iterrows():
-            vals = []
+        for idx, row in opportunities.iterrows():
+            values = []
             for col in _COLUMNS:
-                v = row.get(col, "")
-                if isinstance(v, float):
-                    if col in ("z_score", "pct_rank"):
-                        vals.append(f"{v:.2f}" if (pd.notna(v) and np.isfinite(v)) else "—")
-                    else:
-                        vals.append(f"{v:.4f}" if (pd.notna(v) and np.isfinite(v)) else "—")
+                value = row.get(col, "")
+                if col == "spread":
+                    f = float(value) if pd.notna(value) and np.isfinite(float(value)) else np.nan
+                    values.append(f"{f:+.2%}" if np.isfinite(f) else "-")
+                elif col == "z_score":
+                    f = float(value) if pd.notna(value) and np.isfinite(float(value)) else np.nan
+                    values.append(f"{f:+.2f}" if np.isfinite(f) else "-")
+                elif col == "percentile":
+                    f = float(value) if pd.notna(value) and np.isfinite(float(value)) else np.nan
+                    values.append(f"{f:.0f}" if np.isfinite(f) else "-")
                 else:
-                    vals.append(str(v) if v != "" and pd.notna(v) else "—")
+                    values.append(str(value) if value != "" and pd.notna(value) else "-")
 
-            z = row.get("z_score")
-            try:
-                z_f = float(z) if pd.notna(z) else float("nan")
-                z_f = z_f if np.isfinite(z_f) else float("nan")
-            except (TypeError, ValueError):
-                z_f = float("nan")
-            if np.isfinite(z_f) and z_f > 1.5:
+            direction = str(row.get("direction", "Neutral"))
+            data_quality = str(row.get("data_quality", ""))
+            if data_quality in {"Degraded", "Poor", "Unknown"}:
+                tag = "warning"
+            elif direction == "Rich":
                 tag = "rich"
-            elif np.isfinite(z_f) and z_f < -1.5:
+            elif direction == "Cheap":
                 tag = "cheap"
             else:
                 tag = "neutral"
+            self.tree.insert("", "end", iid=str(idx), values=values, tags=(tag,))
 
-            self.tree.insert("", "end", values=vals, tags=(tag,))
+        first = self.tree.get_children()
+        if first:
+            self.tree.selection_set(first[0])
+            self.tree.focus(first[0])
+            self._render_detail_for_index(int(first[0]))
+        warning_count = len(payload.get("warnings") or [])
+        self.lbl_status.config(text=f"{len(opportunities)} opportunity thesis/theses synthesized; {warning_count} warning(s).")
+
+    def _set_summary(self, items):
+        text = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(items))
+        if not text:
+            text = "Refresh to generate synthesized conclusions for the selected peer group."
+        self.summary_text.configure(state=tk.NORMAL)
+        self.summary_text.delete("1.0", tk.END)
+        self.summary_text.insert(tk.END, text)
+        self.summary_text.configure(state=tk.DISABLED)
+
+    def _set_detail(self, text: str):
+        self.detail_text.configure(state=tk.NORMAL)
+        self.detail_text.delete("1.0", tk.END)
+        self.detail_text.insert(tk.END, text or "Select a signal to inspect the thesis.")
+        self.detail_text.configure(state=tk.DISABLED)
+
+    def _on_row_selected(self, _event=None):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        try:
+            self._render_detail_for_index(int(selected[0]))
+        except ValueError:
+            self._set_detail("No selected signal.")
+
+    def _render_detail_for_index(self, idx: int):
+        if self._last_opportunities is None or idx not in self._last_opportunities.index:
+            self._set_detail("No selected signal.")
+            return
+        row = self._last_opportunities.loc[idx]
+        warnings = str(row.get("warnings", "") or "None")
+        detail = (
+            f"Opportunity: {row.get('opportunity', '')}\n\n"
+            f"What differs vs peers:\n{row.get('what_differs', '')}\n\n"
+            f"Why it matters:\n{row.get('why_matters', '')}\n\n"
+            f"Statistical read:\n{row.get('statistical_read', '')}\n\n"
+            f"Structural comparability:\n{row.get('comparability', '')}\n\n"
+            f"Spillover / convergence support:\n{row.get('spillover_support', '')}\n\n"
+            f"Event context:\n{row.get('event_context', '')}\n\n"
+            f"Warnings:\n{warnings}"
+        )
+        self._set_detail(detail)

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Command-line Synthetic ETF Demo.
+Command-line peer-composite demo.
 
 Examples:
-  python scripts/synthetic_etf_demo.py --target SPY --peers QQQ IWM --weight-mode corr
-  python scripts/synthetic_etf_demo.py --target SPY --peers QQQ IWM --export-dir out/synth_spy --no-show
+  python scripts/peer_composite_demo.py --target SPY --peers QQQ IWM --weight-mode corr
+  python scripts/peer_composite_demo.py --target SPY --peers QQQ IWM --export-dir out/peer_spy --no-show
 
 Optional ingestion (if you want fresh data):
-  python scripts/synthetic_etf_demo.py --ingest --tickers SPY QQQ IWM
+  python scripts/peer_composite_demo.py --ingest --tickers SPY QQQ IWM
 
 """
 
@@ -22,8 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.analysis_synthetic_etf import SyntheticETFConfig, SyntheticETFBuilder
-from display.plotting.display_viewers_synthetic_etf_viewer import show_synthetic_etf
+from analysis.peer_composite_service import PeerCompositeConfig, PeerCompositeBuilder
+from display.plotting.peer_composite_viewer import show_peer_composite
 from analysis.analysis_pipeline import ingest_and_process, available_dates
 from analysis.settings import (
     DEFAULT_PILLAR_DAYS,
@@ -32,7 +32,7 @@ from analysis.settings import (
 )
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Synthetic ETF Surface Demo")
+    p = argparse.ArgumentParser(description="Peer-composite surface demo")
     p.add_argument("--target", required=True, help="Target ticker")
     p.add_argument("--peers", nargs="+", required=True, help="Peer tickers")
     p.add_argument("--weight-mode", choices=["corr", "pca", "cosine", "equal", "custom"], default="corr")
@@ -79,10 +79,9 @@ def main():
             raise SystemExit("Must supply --custom-weights ticker=weight ... for custom mode.")
         custom_weights = parse_custom_weights(args.custom_weights)
 
-    cfg = SyntheticETFConfig(
+    cfg = PeerCompositeConfig(
         target=args.target.upper(),
         peers=tuple(t.upper() for t in args.peers),
-        pillar_days=tuple(args.pillar_days),
         tenors=tuple(args.tenors) if args.tenors else None or (),
         tolerance_days=args.tolerance_days,
         lookback=args.lookback,
@@ -92,10 +91,10 @@ def main():
 
     # Fill missing tenors from default if not specified
     if not cfg.tenors:
-        from analysis.syntheticETFBuilder import DEFAULT_TENORS
+        from analysis.peer_composite_builder import DEFAULT_TENORS
         cfg.tenors = DEFAULT_TENORS
 
-    builder = SyntheticETFBuilder(cfg)
+    builder = PeerCompositeBuilder(cfg)
     artifacts = builder.build_all(custom_weights=custom_weights)
 
     print("\n=== Weights ===")
@@ -121,7 +120,7 @@ def main():
         builder.export(artifacts, args.export_dir)
 
     if not args.no_show:
-        show_synthetic_etf(artifacts, target=cfg.target)
+        show_peer_composite(artifacts, target=cfg.target)
 
 
 if __name__ == "__main__":

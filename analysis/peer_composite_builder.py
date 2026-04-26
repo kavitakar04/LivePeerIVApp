@@ -1,11 +1,11 @@
-# analysis/syntheticETFBuilder.py
+# analysis/peer_composite_builder.py
 from __future__ import annotations
 import sqlite3
 from typing import Dict, Optional, Iterable, Mapping, Union, Tuple
 import pandas as pd
 import numpy as np
 
-# For ATM pillars synthetic IV
+# For ATM pillar peer-composite IV
 from data.db_utils import get_conn
 from data.quote_quality import (
     ANALYTICS_MAX_MONEYNESS,
@@ -129,7 +129,7 @@ def build_surface_grids(
         out[ticker] = sub
     return out
 # ============================================================
-# 1) Surface-based synthetic ETF (grid combine)
+# 1) Surface-based peer composite (grid combine)
 # ============================================================
 
 def combine_surfaces(
@@ -138,7 +138,7 @@ def combine_surfaces(
     weight_grids: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
     """
-    Combine normalized volatility surfaces across tickers into a synthetic surface.
+    Combine normalized volatility surfaces across peer tickers into a composite surface.
 
     Parameters
     ----------
@@ -155,7 +155,7 @@ def combine_surfaces(
     Returns
     -------
     dict
-        {date -> DataFrame} representing the synthetic ETF surface for each date.
+        {date -> DataFrame} representing the peer-composite surface for each date.
     """
     # Normalize top-level weights defensively
     rhos = dict(rhos)
@@ -215,7 +215,7 @@ def combine_surfaces(
 
 
 # ============================================================
-# 2) ATM-pillar synthetic IV (series combine)
+# 2) ATM-pillar peer-composite IV (series combine)
 # ============================================================
 
 def build_synthetic_iv(
@@ -225,7 +225,7 @@ def build_synthetic_iv(
     conn: Optional["sqlite3.Connection"] = None,
 ) -> pd.DataFrame:
     """
-    Build a synthetic ATM volatility series by pillar, combining per-ticker ATM IVs.
+    Build a peer-composite ATM volatility series by pillar from per-ticker ATM IVs.
 
     Uses your DB-backed ATM selection:
       - loads is_atm=1 quotes via analysis.pillars.load_atm()
@@ -322,7 +322,7 @@ def build_synthetic_iv_by_rank(
     max_expiries: int = DEFAULT_MAX_EXPIRIES,
     atm_band: float = DEFAULT_ATM_BAND,
 ) -> pd.DataFrame:
-    """Combine peer ATM vols by expiry rank into synthetic curve for one date."""
+    """Combine peer ATM vols by expiry rank into a composite curve for one date."""
     from analysis.analysis_pipeline import get_smile_slice
     from analysis.correlation_utils import compute_atm_corr_pillar_free
 
@@ -364,6 +364,6 @@ def build_synthetic_iv_by_rank(
 # ============================================================
 
 if __name__ == "__main__":
-    # Example: build a 30D synthetic ATM IV from SPY/QQQ equal weights
+    # Example: build a 30D peer-composite ATM IV from SPY/QQQ equal weights
     df_syn = build_synthetic_iv({"SPY": 0.5, "QQQ": 0.5}, pillar_days=30)
     print(df_syn.head())

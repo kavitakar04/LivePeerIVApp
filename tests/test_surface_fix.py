@@ -26,7 +26,7 @@ def test_surface_feature_graceful_failure():
             
     except RuntimeError as e:
         if "surface grids unavailable" in str(e):
-            print("✓ Expected error - syntheticETFBuilder not available in this environment")
+            print("Expected error - peer-composite surface grids unavailable in this environment")
         else:
             print(f"✗ Unexpected RuntimeError: {e}")
     except Exception as e:

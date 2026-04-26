@@ -1,6 +1,6 @@
 # CleanIV Correlation Analysis Tool
 
-A comprehensive Python application for analyzing implied volatility correlations across equity options markets. This tool provides advanced analytics for volatility surface construction, correlation analysis, and synthetic ETF modeling.
+A comprehensive Python application for analyzing implied volatility correlations across equity options markets. This tool provides advanced analytics for volatility surface construction, correlation analysis, and peer-composite modeling.
 
 ## 🚀 Features
 
@@ -8,20 +8,20 @@ A comprehensive Python application for analyzing implied volatility correlations
 - **Implied Volatility Surface Construction**: Build clean, interpolated IV surfaces from raw options data
 - **Correlation Analysis**: Compute correlations across different modes (ATM, term structure, full surface)
 - **Cosine Similarity Weights**: Alternative to correlation for small n-vectors, focuses on curve shape rather than levels
-- **Synthetic ETF Modeling**: Create synthetic volatility surfaces using correlation-weighted or cosine-weighted combinations
+- **Peer Composite Modeling**: Create weighted peer-composite volatility surfaces using correlation-weighted or cosine-weighted combinations
 - **Greeks Calculation**: Full Black-Scholes Greeks computation with risk-free rates and dividend yields
 - **Standard Rates**: Assumes a 4.08% risk-free rate by default, adjustable in the GUI
 
 ### Advanced Modeling
 - **SVI & SABR Volatility Models**: Fit industry-standard volatility models with confidence intervals
 - **ATM Pillar Analysis**: Extract and analyze at-the-money volatilities across standardized maturities
-- **Relative Value Analysis**: Compare target assets against synthetic benchmarks using correlation weights
+- **Relative Value Analysis**: Compare target assets against weighted peer composites using correlation weights
 
 ### Interactive GUI
 - **Real-time Data Browser**: Download and analyze options data with an intuitive interface
 - **Preset Management**: Save and load commonly used ticker combinations
-- **Multiple Plot Types**: Volatility smiles, term structures, correlation matrices, and synthetic surfaces
-- **Dynamic Overlays**: Compare target assets with correlation-weighted synthetic alternatives
+- **Multiple Plot Types**: Volatility smiles, term structures, correlation matrices, and peer-composite surfaces
+- **Dynamic Overlays**: Compare target assets with correlation-weighted peer composites
 
 ## 📦 Installation
 
@@ -65,7 +65,7 @@ from analysis.analysis_pipeline import *
 tickers = ["SPY", "QQQ", "AAPL", "MSFT"]
 ingest_and_process(tickers, max_expiries=6)
 
-# Build synthetic ETF surface with automatic correlation/PCA weights
+# Build peer-composite surface with automatic correlation/PCA weights
 target = "SPY"
 peers = ["AAPL", "MSFT", "GOOGL"]
 synthetic_surface, weights = build_synthetic_surface_corrweighted(target, peers)
@@ -79,7 +79,7 @@ betas = compute_betas("iv_atm", benchmark="SPY")
 Interactive plots support quick visibility toggles:
 
 * `r` – toggle Raw series
-* `s` – toggle Synthetic series
+* `s` – toggle peer-composite series
 * `c` – toggle confidence band
 * `u` – toggle surface views
 
@@ -93,7 +93,8 @@ CleanIV_Correlation/
 │   ├── analysis_pipeline.py    # Main orchestration
 │   ├── correlation_builder.py  # Correlation calculations
 │   ├── surface_builder.py      # IV surface construction
-│   ├── syntheticETFBuilder.py  # Synthetic ETF modeling
+│   ├── peer_composite_builder.py  # Peer-composite primitives
+│   ├── peer_composite_service.py  # Peer-composite orchestration
 │   └── pillars.py              # ATM pillar analysis
 ├── data/               # Data management
 │   ├── data_downloader.py      # Yahoo Finance integration
@@ -117,7 +118,7 @@ The `analysis_pipeline.py` provides a unified interface for:
 - Data ingestion and enrichment
 - Surface grid construction
 - Correlation analysis across multiple modes
-- Synthetic ETF construction
+- Peer-composite construction
 - Relative value analysis
 
 ### Volatility Models
@@ -154,7 +155,7 @@ SQLite-based storage with tables for:
 
 
 ```python
-# Build synthetic surface from correlation/PCA-derived weights
+# Build peer-composite surface from correlation/PCA-derived weights
 target = "SPY"
 peers = ["AAPL", "MSFT", "GOOGL", "AMZN"]
 synthetic, weights = build_synthetic_surface_corrweighted(target, peers)
@@ -174,7 +175,7 @@ weights = compute_peer_weights(target, peers, weight_mode="cosine_atm")
 1. **Smile Plots**: K/S vs IV with model fits and confidence bands
 2. **Term Structure**: ATM vol vs time to expiry
 3. **Correlation Matrix**: Heatmaps with data quality indicators
-4. **Synthetic Surface**: Compare target vs synthetic smiles
+4. **Peer Composite Surface**: Compare target vs weighted peer-composite smiles
 
 ### Advanced Controls
 - Model selection (SVI/SABR)

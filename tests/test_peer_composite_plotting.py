@@ -4,20 +4,20 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from analysis.analysis_synthetic_etf import SyntheticETFArtifacts
-from display.plotting.display_viewers_synthetic_etf_viewer import (
-    show_synthetic_etf,
+from analysis.peer_composite_service import PeerCompositeArtifacts
+from display.plotting.peer_composite_viewer import (
+    show_peer_composite,
     _extract_latest,
 )
 
-from display.plotting.smile_plot import plot_synthetic_etf_smile
-from display.plotting.term_plot import plot_synthetic_etf_term_structure
+from display.plotting.smile_plot import plot_peer_composite_smile
+from display.plotting.term_plot import plot_peer_composite_term_structure
 from analysis.confidence_bands import (
-    synthetic_etf_confidence_bands,
-    synthetic_etf_pillar_bands,
+    peer_composite_confidence_bands,
+    peer_composite_pillar_bands,
 )
 
-def test_plot_synthetic_etf_smile_runs():
+def test_plot_peer_composite_smile_runs():
     surfaces = {
         'A': np.array([0.2, 0.21, 0.22]),
         'B': np.array([0.25, 0.24, 0.23]),
@@ -26,12 +26,12 @@ def test_plot_synthetic_etf_smile_runs():
     grid = np.array([0.9, 1.0, 1.1])
 
     fig, ax = plt.subplots()
-    bands = synthetic_etf_confidence_bands(surfaces, weights, grid, n_boot=5)
-    bands = plot_synthetic_etf_smile(ax, bands)
+    bands = peer_composite_confidence_bands(surfaces, weights, grid, n_boot=5)
+    bands = plot_peer_composite_smile(ax, bands)
     assert bands.mean.shape == grid.shape
     plt.close(fig)
 
-def test_plot_synthetic_etf_smile_adds_to_legend():
+def test_plot_peer_composite_smile_adds_to_legend():
     surfaces = {
         'A': np.array([0.2, 0.21, 0.22]),
     }
@@ -42,15 +42,15 @@ def test_plot_synthetic_etf_smile_adds_to_legend():
     ax.plot(grid, surfaces['A'], label='Target')
     ax.legend()
 
-    bands = synthetic_etf_confidence_bands(surfaces, weights, grid, n_boot=5)
-    plot_synthetic_etf_smile(ax, bands)
+    bands = peer_composite_confidence_bands(surfaces, weights, grid, n_boot=5)
+    plot_peer_composite_smile(ax, bands)
     legend = ax.get_legend()
     assert legend is not None
     labels = [text.get_text() for text in legend.get_texts()]
-    assert 'Synthetic ETF' in labels
+    assert 'Peer composite' in labels
     plt.close(fig)
 
-def test_plot_synthetic_etf_term_structure_runs():
+def test_plot_peer_composite_term_structure_runs():
     atm_data = {
         'A': np.array([0.2, 0.21, 0.22]),
         'B': np.array([0.25, 0.24, 0.23]),
@@ -59,13 +59,13 @@ def test_plot_synthetic_etf_term_structure_runs():
     pillar_days = np.array([30, 60, 90])
 
     fig, ax = plt.subplots()
-    bands = synthetic_etf_pillar_bands(atm_data, weights, pillar_days, n_boot=5)
-    bands = plot_synthetic_etf_term_structure(ax, bands)
+    bands = peer_composite_pillar_bands(atm_data, weights, pillar_days, n_boot=5)
+    bands = plot_peer_composite_term_structure(ax, bands)
     assert bands.mean.shape == pillar_days.shape
     plt.close(fig)
 
 
-def test_plot_synthetic_etf_term_structure_adds_to_legend():
+def test_plot_peer_composite_term_structure_adds_to_legend():
     atm_data = {
         'A': np.array([0.2, 0.21, 0.22]),
     }
@@ -76,16 +76,16 @@ def test_plot_synthetic_etf_term_structure_adds_to_legend():
     ax.plot(pillar_days, atm_data['A'], label='Target')
     ax.legend()
 
-    bands = synthetic_etf_pillar_bands(atm_data, weights, pillar_days, n_boot=5)
-    plot_synthetic_etf_term_structure(ax, bands)
+    bands = peer_composite_pillar_bands(atm_data, weights, pillar_days, n_boot=5)
+    plot_peer_composite_term_structure(ax, bands)
     legend = ax.get_legend()
     assert legend is not None
     labels = [text.get_text() for text in legend.get_texts()]
-    assert 'Synthetic ATM' in labels
+    assert 'Peer composite ATM' in labels
     plt.close(fig)
 
 
-def test_show_synthetic_etf_handles_disjoint_dates(monkeypatch):
+def test_show_peer_composite_handles_disjoint_dates(monkeypatch):
     df_tgt = pd.DataFrame(
         [[0.2, 0.21], [0.22, 0.23]],
         index=["0.9", "1.1"],
@@ -96,7 +96,7 @@ def test_show_synthetic_etf_handles_disjoint_dates(monkeypatch):
         index=["0.9", "1.1"],
         columns=["30", "60"],
     )
-    artifacts = SyntheticETFArtifacts(
+    artifacts = PeerCompositeArtifacts(
         weights=pd.Series(dtype=float),
         surfaces={"A": {"2024-01-01": df_tgt}},
         synthetic_surfaces={"2024-01-02": df_syn},
@@ -108,4 +108,4 @@ def test_show_synthetic_etf_handles_disjoint_dates(monkeypatch):
     assert d_syn == "2024-01-02"
     assert tgt_df is not None and syn_df is not None
     monkeypatch.setattr(plt, "show", lambda: None)
-    show_synthetic_etf(artifacts, target="A")
+    show_peer_composite(artifacts, target="A")

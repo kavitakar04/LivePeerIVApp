@@ -41,35 +41,10 @@ The spillover GUI currently uses table views and line plots. A graph panel can b
 
 This is additive and can be feature-flagged so existing users are unaffected.
 
-## Recommended integration strategy (low-risk, incremental)
+## Integration Tracking
 
-### Phase 1 — Graph adapter utilities (no behavior change)
-
-Add a new module, e.g. `analysis/spillover/network_graph.py`, with pure adapters:
-
-1. `build_spillover_digraph(summary_df, horizon=None, min_n=10, min_hit_rate=0.0)`
-2. `build_corr_graph(corr_df, min_abs_corr=0.3)`
-3. `compute_graph_metrics(G)` returning DataFrame-friendly metrics
-
-Design principle: all functions accept/return pandas-friendly structures so callers are not forced into NetworkX types unless needed.
-
-### Phase 2 — Use graph metrics as optional ranking signals
-
-Add optional weighting/ranking inputs in synthetic peer workflows:
-
-- Blend existing statistical weight with graph influence score
-- Example blend: `final_score = alpha * corr_weight + (1 - alpha) * centrality_norm`
-- Keep default `alpha=1.0` to preserve current behavior
-
-This creates measurable value without breaking reproducibility.
-
-### Phase 3 — Visualization and diagnostics
-
-Add graph view to spillover GUI:
-
-- Render from precomputed coordinates (`spring_layout` cached by ticker universe)
-- Add controls for horizon/threshold/sign
-- Add export to GraphML/CSV edge list for research workflows
+The implementation work from this assessment was migrated to `TASKS.MD` as
+`TASK-012`.
 
 ## Concrete analysis use-cases unlocked
 
@@ -117,20 +92,6 @@ def graph_metrics_df(G: nx.Graph) -> pd.DataFrame: ...
   - Offloading heavy centrality computations
   - Future migration to `igraph`/`graph-tool` only if profiling shows bottlenecks
 
-## Testing approach
-
-Add targeted tests (no GUI dependency required):
-
-1. Graph construction fidelity from known summary fixtures
-2. Edge filtering by thresholds (`min_n`, `min_hit_rate`, abs weight)
-3. Metric stability (deterministic ordering and finite values)
-4. Signed edge handling (positive/negative spillovers)
-
-Potential test files:
-
-- `tests/test_spillover_network_graph.py`
-- `tests/test_corr_network_graph.py`
-
 ## Risks and mitigations
 
 - **Risk:** Users interpret correlation graph edges as causal.
@@ -139,13 +100,3 @@ Potential test files:
   - **Mitigation:** hard filters on `n`, optional bootstrap/rolling stability checks.
 - **Risk:** Visual clutter in GUI.
   - **Mitigation:** threshold sliders, top-N edge display, cluster-based coloring.
-
-## Suggested first deliverable (1 sprint)
-
-A pragmatic first step is:
-
-1. Implement graph adapters for spillover summary and correlation matrices.
-2. Add metric table output (`centrality`, `degree`, `betweenness`) consumable by existing UI tables.
-3. Add CLI/demo script that generates and prints top influencers.
-
-This gives immediate analytic value with minimal refactor and a clear path to deeper graph-native features later.

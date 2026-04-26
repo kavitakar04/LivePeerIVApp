@@ -1,10 +1,8 @@
 # analysis/pillars.py
 from __future__ import annotations
 from typing import Iterable, Tuple, Optional, Dict, List
-import math
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
 from data.db_utils import get_conn
@@ -154,30 +152,14 @@ def build_atm_matrix(
     return atm_df, corr_df
 
 # ----------------------------
-# Optional model fits with graceful fallbacks
+# ATM extraction compatibility exports
 # ----------------------------
-_HAS_SVI = False
-_HAS_SABR = False
-try:
-    # from your upgraded SVI module (kept compatible via aliases)
-    from volModel.sviFit import fit_svi_smile as _fit_svi_smile, svi_implied_vol as _svi_iv
-    _HAS_SVI = True
-except Exception:
-    pass
-
-try:
-    # prefer the slice fitter and vectorized predictor
-    from volModel.sabrFit import fit_sabr_slice as _fit_sabr_slice, sabr_smile_iv as _sabr_iv
-    _HAS_SABR = True
-except Exception:
-    def _sabr_iv(S: float, K: np.ndarray | float, T: float, params) -> np.ndarray | float:
-        # Extremely crude fallback: constant vol ~ alpha/F^(1-beta)
-        if isinstance(K, (list, tuple, np.ndarray)):
-            K = np.asarray(K, float)
-            return np.full_like(K, 0.2, dtype=float)
-        return 0.2
-    def _fit_sabr_slice(*_a, **_k):
-        raise RuntimeError("SABR fitter unavailable")
+from analysis.atm_extraction import (
+    _fit_smile_get_atm,
+    atm_curve_for_ticker_on_date,
+    compute_atm_by_expiry,
+    fit_smile_get_atm,
+)
 
 # ----------------------------
 # DB helpers (optional)
@@ -260,219 +242,6 @@ def nearest_pillars(
         return out
     # keep only within tolerance by default
     return out.loc[out["within_tol"]].reset_index(drop=True)
-
-# ----------------------------
-# Numeric helpers for ATM extraction
-# ----------------------------
-def _ensure_numeric(d: pd.DataFrame) -> pd.DataFrame:
-    d = d.copy()
-    for c in ("T", "sigma", "moneyness", "K", "S", "vega"):
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce")
-    return d.dropna(subset=["T", "sigma", "moneyness", "K", "S"])
-
-def _vega_weights_if_any(g: pd.DataFrame) -> Optional[np.ndarray]:
-    if "vega" in g.columns:
-        w = pd.to_numeric(g["vega"], errors="coerce").to_numpy()
-        w = np.where(np.isfinite(w) & (w > 0), w, np.nan)
-        if np.isfinite(w).sum() >= 3:
-            w = np.nan_to_num(w, nan=np.nanmedian(w))
-            s = w.sum()
-            if s > 0:
-                return w / s
-    return None
-
-def _local_poly_fit_atm(
-    k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None, band: float = 0.25
-) -> Dict[str, float]:
-    # quadratic in k around 0 → f(k)=a + b k + c k^2 ; ATM=a, skew=b, curv=2c
-    mask = np.abs(k) <= band
-    if mask.sum() < 3:
-        mask = np.argsort(np.abs(k))[:max(3, min(7, k.size))]
-    x = k[mask]
-    y = iv[mask]
-    X = np.column_stack([np.ones_like(x), x, x**2])
-    if weights is not None:
-        w = weights[mask]
-        W = np.diag(w)
-        beta = np.linalg.lstsq(W @ X, W @ y, rcond=None)[0]
-    else:
-        beta = np.linalg.lstsq(X, y, rcond=None)[0]
-    a, b, c = beta
-    rmse = float(np.sqrt(np.mean((X @ beta - y) ** 2)))
-    return {"atm_vol": float(a), "skew": float(b), "curv": float(2 * c), "rmse": rmse, "model": "poly2"}
-
-def _fit_smile_get_atm(
-    g: pd.DataFrame,
-    model: str = "svi",
-    vega_weighted: bool = True,
-    atm_band_for_poly: float = 0.25,
-) -> Dict[str, float]:
-    """
-    Fit SVI/SABR for one expiry and return ATM vol, slope, curvature, rmse.
-    Fallback to local quadratic if models unavailable or fail.
-    """
-    S = float(np.nanmedian(g["S"]))
-    T = float(np.nanmedian(g["T"]))
-    if not np.isfinite(S) or not np.isfinite(T) or T <= 0:
-        return {"atm_vol": np.nan, "skew": np.nan, "curv": np.nan, "rmse": np.nan, "model": "invalid"}
-
-    mny = g["moneyness"].to_numpy(float)
-    iv = g["sigma"].to_numpy(float)
-    k = np.log(np.clip(mny, 1e-12, None))
-    w = _vega_weights_if_any(g) if vega_weighted else None
-
-    def _finite_diff(f, x0: float, h: float = 1e-3):
-        f_p = f(x0 + h)
-        f_m = f(x0 - h)
-        f0 = f(x0)
-        first = (f_p - f_m) / (2 * h)
-        second = (f_p - 2 * f0 + f_m) / (h * h)
-        return float(first), float(second)
-
-    use_svi = (model == "svi") or (model == "auto")
-    use_sabr = (model == "sabr") or (model == "auto")
-
-    # --- SVI path ---
-    if use_svi and _HAS_SVI:
-        try:
-            params = _fit_svi_smile(k, iv, T)  # (a,b,rho,m,sigma)
-            def f(kx: float) -> float:
-                return float(_svi_iv(kx, T, *params))
-            atm = f(0.0)
-            sk, cu = _finite_diff(f, 0.0, 1e-3)
-            yhat = np.array([f(kk) for kk in k])
-            rmse = float(np.sqrt(np.mean((yhat - iv) ** 2)))
-            return {"atm_vol": atm, "skew": sk, "curv": cu, "rmse": rmse, "model": "svi"}
-        except Exception:
-            pass
-
-    # --- SABR path ---
-    if use_sabr and _HAS_SABR:
-        try:
-            # Convert to strikes and fit
-            K = mny * S
-            params = _fit_sabr_slice(S=S, K=np.asarray(K, float), T=T, iv_obs=np.asarray(iv, float))
-            def f(kx: float) -> float:
-                Kx = S * math.exp(kx)
-                ivp = _sabr_iv(S, np.array([Kx], float), T, params)
-                return float(np.asarray(ivp, float)[0])
-            atm = f(0.0)
-            sk, cu = _finite_diff(f, 0.0, 1e-3)
-            yhat = np.array([f(kk) for kk in k])
-            rmse = float(np.sqrt(np.mean((yhat - iv) ** 2)))
-            return {"atm_vol": atm, "skew": sk, "curv": cu, "rmse": rmse, "model": "sabr"}
-        except Exception:
-            pass
-
-    # --- Fallback local quadratic around ATM ---
-    return _local_poly_fit_atm(k, iv, weights=w, band=atm_band_for_poly)
-
-# ----------------------------
-# Public API: ATM per expiry
-# ----------------------------
-def compute_atm_by_expiry(
-    df: pd.DataFrame,
-    atm_band: float = DEFAULT_ATM_BAND,
-    method: str = "fit",        # "fit" (SVI/SABR/poly) or "median"
-    model: str = "auto",        # when method="fit": "svi" | "sabr" | "auto"
-    vega_weighted: bool = True,
-    min_points: int = 4,
-    n_boot: int = 100,          # bootstrap reps per expiry (100 = default for CI)
-    ci_level: float = 0.68,     # used if n_boot>0
-) -> pd.DataFrame:
-    """
-    Compute ATM vol per expiry for a single ticker-date DataFrame.
-
-    Expects columns: ['T','moneyness','sigma','K','S'] (optional: 'vega','expiry').
-
-    Returns columns:
-      ['T','atm_vol','count','mny_min','mny_max','rmse','model','atm_lo','atm_hi','skew','curv',('expiry')]
-    """
-    need = {"T", "moneyness", "sigma"}
-    if not need.issubset(df.columns):
-        return pd.DataFrame(columns=["T", "atm_vol", "count", "mny_min", "mny_max"])
-    d = _ensure_numeric(df)
-    if d.empty:
-        return pd.DataFrame(columns=["T", "atm_vol", "count", "mny_min", "mny_max"])
-
-    rows = []
-    for T_val, g in d.groupby("T"):
-        g = g.dropna(subset=["moneyness", "sigma"])
-
-        # Thin slice → simple ATM median/nearest
-        if len(g) < max(3, min_points) or method == "median":
-            inb = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
-            if not inb.empty:
-                atm_vol = float(inb["sigma"].median()); cnt = int(len(inb))
-            else:
-                i = int((g["moneyness"] - 1.0).abs().idxmin())
-                atm_vol = float(g.loc[i, "sigma"]); cnt = 1
-            row = {
-                "T": float(T_val), "atm_vol": atm_vol, "count": cnt,
-                "mny_min": float(g["moneyness"].min()), "mny_max": float(g["moneyness"].max()),
-                "rmse": np.nan, "model": "median", "atm_lo": np.nan, "atm_hi": np.nan,
-                "skew": np.nan, "curv": np.nan,
-            }
-            if "expiry" in g.columns:
-                row["expiry"] = g["expiry"].mode().iloc[0]
-            rows.append(row)
-            continue
-
-        # Fit-based ATM
-        res = _fit_smile_get_atm(g, model=model, vega_weighted=vega_weighted)
-
-        # optional bootstrap CI
-        atm_lo = atm_hi = np.nan
-        if n_boot and n_boot > 0:
-            rng = np.random.default_rng(42)
-            boots = []
-            for _ in range(int(n_boot)):
-                gb = g.sample(frac=1.0, replace=True, random_state=int(rng.integers(0, 1_000_000)))
-                try:
-                    rb = _fit_smile_get_atm(gb, model=model, vega_weighted=vega_weighted)
-                    boots.append(rb.get("atm_vol", np.nan))
-                except Exception:
-                    boots.append(np.nan)
-            boots = np.array([b for b in boots if np.isfinite(b)], float)
-            if boots.size >= 10:
-                alpha = (1.0 - float(ci_level)) / 2.0
-                atm_lo = float(np.quantile(boots, alpha))
-                atm_hi = float(np.quantile(boots, 1 - alpha))
-
-        row = {
-            "T": float(T_val),
-            "atm_vol": float(res["atm_vol"]),
-            "count": int(len(g)),
-            "mny_min": float(g["moneyness"].min()),
-            "mny_max": float(g["moneyness"].max()),
-            "rmse": float(res.get("rmse", np.nan)),
-            "model": str(res.get("model", "unknown")),
-            "atm_lo": atm_lo,
-            "atm_hi": atm_hi,
-            "skew": float(res.get("skew", np.nan)),
-            "curv": float(res.get("curv", np.nan)),
-        }
-        if "expiry" in g.columns:
-            row["expiry"] = g["expiry"].mode().iloc[0]
-        rows.append(row)
-
-    return pd.DataFrame(rows).sort_values("T").reset_index(drop=True)
-
-# Public tiny helper: build ATM curve for GUI/plots
-def atm_curve_for_ticker_on_date(
-    get_smile_slice,
-    ticker: str,
-    asof: str,
-    **kw,
-) -> pd.DataFrame:
-    """
-    Convenience: fetch full day slice and compute its ATM-by-expiry curve.
-    """
-    df = get_smile_slice(ticker, asof, T_target_years=None)
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["T", "atm_vol"])
-    return compute_atm_by_expiry(df, **kw)[["T", "atm_vol"]].dropna().sort_values("T").reset_index(drop=True)
 
 # ----------------------------
 # End of file - duplicates removed

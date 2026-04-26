@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.spillover.vol_spillover import run_spillover
-from analysis.analysis_pipeline import get_daily_iv_for_spillover, get_daily_hv_for_spillover
+from analysis.data_availability_service import get_daily_iv_for_spillover, get_daily_hv_for_spillover
 
 try:
     from analysis.spillover.network_graph import build_spillover_digraph, compute_graph_metrics
@@ -28,6 +28,32 @@ class SpilloverFrame(ttk.Frame):
         super().__init__(master)
         self.pack(fill=tk.BOTH, expand=True)
         self._input_panel = input_panel
+
+        desc = ttk.Label(
+            self,
+            text=(
+                "Volatility spillover / propagation across peers for RV context. "
+                "A trigger is a large daily IV/HV move in one ticker. "
+                "Frequency of response is the share of trigger events where a peer also moves beyond the threshold; "
+                "same-direction probability is the share moving in the trigger direction; "
+                "median IV change is the typical peer response over the horizon."
+            ),
+            wraplength=980,
+            justify=tk.LEFT,
+        )
+        desc.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(6, 2))
+
+        hint = ttk.Label(
+            self,
+            text=(
+                "Interpretation hint: strongest relationships combine high response frequency, "
+                "high same-direction probability, a large abnormal response, and low p/q values."
+            ),
+            foreground="gray",
+            wraplength=980,
+            justify=tk.LEFT,
+        )
+        hint.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
 
         # ---- Controls ----
         ctrl = ttk.Frame(self)
@@ -107,20 +133,24 @@ class SpilloverFrame(ttk.Frame):
         self._event_rows: dict[str, pd.Series] = {}
 
         # Summary table
-        sum_cols = ("ticker", "peer", "h", "hit", "sign", "resp", "elast", "n")
+        sum_cols = ("ticker", "peer", "h", "hit", "sign", "resp", "abn", "ci", "p", "q", "strength", "n")
         sum_lf = ttk.LabelFrame(tables_frame, text="Spillover Summary (top 50 by hit rate)")
         sum_lf.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
         self.tree_sum = ttk.Treeview(sum_lf, columns=sum_cols, show="headings", height=6)
         headings = {
             "ticker": "Trigger", "peer": "Peer", "h": "H",
-            "hit": "Hit %", "sign": "Sign %", "resp": "Med Resp",
-            "elast": "Med Elast", "n": "N",
+            "hit": "Frequency of response", "sign": "Same-direction probability",
+            "resp": "Median IV change (%)", "abn": "Abnormal IV change (%)",
+            "ci": "95% CI", "p": "Perm p", "q": "FDR q",
+            "strength": "Strength", "n": "N",
         }
-        widths = {"ticker": 70, "peer": 70, "h": 40, "hit": 60,
-                  "sign": 60, "resp": 80, "elast": 80, "n": 50}
+        widths = {"ticker": 70, "peer": 70, "h": 40, "hit": 150,
+                  "sign": 180, "resp": 150, "abn": 150, "ci": 140,
+                  "p": 70, "q": 70, "strength": 100, "n": 50}
         for col in sum_cols:
             self.tree_sum.heading(col, text=headings[col])
             self.tree_sum.column(col, width=widths[col])
+        self.tree_sum.tag_configure("strong", background="#fff2cc")
         sum_sb = ttk.Scrollbar(sum_lf, orient=tk.VERTICAL, command=self.tree_sum.yview)
         self.tree_sum.configure(yscrollcommand=sum_sb.set)
         self.tree_sum.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -130,14 +160,22 @@ class SpilloverFrame(ttk.Frame):
         if _HAVE_NETWORKX:
             gm_lf = ttk.LabelFrame(tables_frame, text="Network Centrality (horizon 1)")
             gm_lf.pack(side=tk.TOP, fill=tk.X)
-            gm_cols = ("node", "out_strength", "in_strength", "betweenness", "degree")
+            gm_note = ttk.Label(
+                gm_lf,
+                text="Leader sends stronger spillovers to peers; Follower receives stronger spillovers from peers.",
+                foreground="gray",
+                wraplength=980,
+                justify=tk.LEFT,
+            )
+            gm_note.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(2, 2))
+            gm_cols = ("node", "role", "out_strength", "in_strength", "betweenness", "degree")
             self.tree_graph = ttk.Treeview(gm_lf, columns=gm_cols, show="headings", height=4)
             gm_headings = {
-                "node": "Ticker", "out_strength": "Out-Strength",
+                "node": "Ticker", "role": "Role", "out_strength": "Out-Strength",
                 "in_strength": "In-Strength", "betweenness": "Betweenness",
                 "degree": "Degree",
             }
-            gm_widths = {"node": 70, "out_strength": 100, "in_strength": 100,
+            gm_widths = {"node": 70, "role": 80, "out_strength": 100, "in_strength": 100,
                          "betweenness": 100, "degree": 60}
             for col in gm_cols:
                 self.tree_graph.heading(col, text=gm_headings[col])
@@ -270,15 +308,39 @@ class SpilloverFrame(ttk.Frame):
         if summary.empty:
             return
         summary = summary.sort_values("hit_rate", ascending=False).head(50)
+        abs_resp_cutoff = summary["median_resp"].abs().quantile(0.75)
+        if pd.isna(abs_resp_cutoff):
+            abs_resp_cutoff = 0.0
         for _, row in summary.iterrows():
+            strength = str(row.get("strength", ""))
+            is_strong = strength == "Strong" or (
+                float(row["hit_rate"]) >= 0.70
+                and float(row["sign_concord"]) >= 0.70
+                and abs(float(row["median_resp"])) >= float(abs_resp_cutoff)
+            )
+            ci_low = row.get("median_resp_ci_low", pd.NA)
+            ci_high = row.get("median_resp_ci_high", pd.NA)
+            ci_text = (
+                f"[{ci_low:.2%}, {ci_high:.2%}]"
+                if pd.notna(ci_low) and pd.notna(ci_high)
+                else ""
+            )
+            p_value = row.get("p_value", pd.NA)
+            q_value = row.get("q_value", pd.NA)
             self.tree_sum.insert(
                 "", tk.END,
                 values=(
                     row["ticker"], row["peer"], row["h"],
                     f"{row['hit_rate']:.0%}", f"{row['sign_concord']:.0%}",
-                    f"{row['median_resp']:.2%}", f"{row['median_elasticity']:.2f}",
+                    f"{row['median_resp']:.2%}",
+                    f"{row.get('median_abnormal_resp', pd.NA):.2%}" if pd.notna(row.get("median_abnormal_resp", pd.NA)) else "",
+                    ci_text,
+                    f"{p_value:.3f}" if pd.notna(p_value) else "",
+                    f"{q_value:.3f}" if pd.notna(q_value) else "",
+                    strength,
                     int(row["n"]),
                 ),
+                tags=("strong",) if is_strong else (),
             )
 
     def _populate_graph_metrics(self):
@@ -295,12 +357,21 @@ class SpilloverFrame(ttk.Frame):
                 return
             metrics = compute_graph_metrics(G).sort_values("out_strength", ascending=False)
             for _, row in metrics.iterrows():
+                out_strength = float(row["out_strength"])
+                in_strength = float(row["in_strength"])
+                if out_strength > in_strength:
+                    role = "Leader"
+                elif in_strength > out_strength:
+                    role = "Follower"
+                else:
+                    role = "Balanced"
                 self.tree_graph.insert(
                     "", tk.END,
                     values=(
                         row["node"],
-                        f"{row['out_strength']:.3f}",
-                        f"{row['in_strength']:.3f}",
+                        role,
+                        f"{out_strength:.3f}",
+                        f"{in_strength:.3f}",
                         f"{row['betweenness_centrality']:.3f}",
                         int(row["degree"]),
                     ),

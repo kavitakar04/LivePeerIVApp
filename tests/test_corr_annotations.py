@@ -42,3 +42,23 @@ def test_weight_legend_separate_axis():
     # Ensure weight axis sits to the right of the main plot
     assert weight_ax.get_position().x0 >= ax.get_position().x1
     assert "Peer Weights" in weight_ax.get_title()
+
+
+def test_coverage_panel_does_not_overlap_colorbar():
+    corr_df = pd.DataFrame(
+        [[1.0, 0.5], [0.5, 1.0]], columns=["A", "B"], index=["A", "B"]
+    )
+    atm_df = pd.DataFrame(
+        [[0.2, 0.21, 0.22], [0.3, 0.31, np.nan]],
+        columns=[1, 2, 3],
+        index=["A", "B"],
+    )
+    fig, ax = plt.subplots()
+    plot_correlation_details(ax, corr_df, show_values=False, atm_df=atm_df)
+
+    assert hasattr(fig, "_corr_colorbar_ax")
+    assert hasattr(fig, "_corr_coverage_ax")
+    colorbar_right = fig._corr_colorbar_ax.get_position().x1
+    coverage_left = fig._corr_coverage_ax.get_position().x0
+
+    assert coverage_left - colorbar_right >= 0.04

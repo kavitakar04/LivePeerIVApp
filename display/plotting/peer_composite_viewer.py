@@ -1,20 +1,20 @@
 """
-Matplotlib-based viewer for Synthetic ETF surfaces.
+Matplotlib-based viewer for peer-composite surfaces.
 
 Features:
-- Side-by-side target vs synthetic surface (moneyness × tenor × IV)
+- Side-by-side target vs peer-composite surface (moneyness × tenor × IV)
 - Difference surface
 - ATM relative value summary table (spread / z / pct_rank per pillar)
 - Optional save to disk
 
 Usage:
-    from analysis.synthetic_etf import SyntheticETFBuilder, SyntheticETFConfig
-    from display.viewers.synthetic_etf_viewer import show_synthetic_etf
+    from analysis.peer_composite_service import PeerCompositeBuilder, PeerCompositeConfig
+    from display.plotting.peer_composite_viewer import show_peer_composite
 
-    cfg = SyntheticETFConfig(target="SPY", peers=("QQQ","IWM"))
-    builder = SyntheticETFBuilder(cfg)
+    cfg = PeerCompositeConfig(target="SPY", peers=("QQQ","IWM"))
+    builder = PeerCompositeBuilder(cfg)
     artifacts = builder.build_all()
-    show_synthetic_etf(artifacts)
+    show_peer_composite(artifacts)
 
 """
 
@@ -25,7 +25,7 @@ import pandas as pd
 from typing import Optional
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  # needed for 3D plotting
 
-from analysis.analysis_synthetic_etf import SyntheticETFArtifacts
+from analysis.peer_composite_service import PeerCompositeArtifacts
 
 
 def _as_float_index(idx) -> list[float]:
@@ -39,7 +39,7 @@ def _as_float_index(idx) -> list[float]:
 
 
 def _extract_latest(
-    artifacts: SyntheticETFArtifacts, target: str
+    artifacts: PeerCompositeArtifacts, target: str
 ) -> tuple[
     Optional[pd.DataFrame],
     Optional[pd.DataFrame],
@@ -100,8 +100,8 @@ def _plot_surface(ax, df: pd.DataFrame, title: str, cmap="viridis"):
     return surf
 
 
-def show_synthetic_etf(
-    artifacts: SyntheticETFArtifacts,
+def show_peer_composite(
+    artifacts: PeerCompositeArtifacts,
     target: Optional[str] = None,
     save_path: Optional[str] = None,
     show_diff: bool = True,
@@ -110,7 +110,7 @@ def show_synthetic_etf(
     target = target or artifacts.meta.get("target")
     tgt_df, syn_df, tgt_date, syn_date = _extract_latest(artifacts, target)
     if tgt_df is None or syn_df is None:
-        print("Missing surface data to plot synthetic ETF.")
+        print("Missing surface data to plot peer composite.")
         return
 
     ncols = 3 if show_diff else 2
@@ -118,7 +118,7 @@ def show_synthetic_etf(
     ax0 = fig.add_subplot(1, ncols, 1, projection="3d")
     ax1 = fig.add_subplot(1, ncols, 2, projection="3d")
     surf0 = _plot_surface(ax0, tgt_df, f"{target} Surface ({tgt_date})")
-    surf1 = _plot_surface(ax1, syn_df, f"Synthetic Surface ({syn_date})")
+    surf1 = _plot_surface(ax1, syn_df, f"Peer Composite Surface ({syn_date})")
 
     fig.colorbar(surf0, ax=ax0, shrink=0.5, aspect=10)
     fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
@@ -130,7 +130,7 @@ def show_synthetic_etf(
         surf2 = _plot_surface(
             ax2,
             diff,
-            "Target - Synthetic (Diff)",
+            "Target - Peer Composite",
             cmap="coolwarm",
         )
         surf2.set_clim(-vmax, vmax)

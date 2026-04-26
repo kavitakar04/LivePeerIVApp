@@ -133,7 +133,7 @@ def fit_and_plot_smile(
     line_kwargs = dict(line_kwargs or {})
     line_kwargs.setdefault("lw", 2 if show_points else 1.6)
     fit_lbl = label or (f"{model.upper()} fit")
-    fit_line = ax.plot(K_grid / S, y_fit, label=fit_lbl)
+    fit_line = ax.plot(K_grid / S, y_fit, label=fit_lbl, **line_kwargs)
     if enable_toggles:
         series_map[f"{model.upper()} Fit"] = list(fit_line)
 
@@ -174,14 +174,14 @@ def fit_and_plot_smile(
     }
 
 
-def plot_synthetic_etf_smile(
+def plot_peer_composite_smile(
     ax: plt.Axes,
     bands: Bands,
     *,
-    label: Optional[str] = "Synthetic ETF",
+    label: Optional[str] = "Peer composite",
     line_kwargs: Optional[Dict] = None,
 ) -> Bands:
-    """Plot synthetic ETF smile using pre-computed confidence bands."""
+    """Plot peer-composite smile using pre-computed confidence bands."""
 
     ax.fill_between(bands.x, bands.lo, bands.hi, alpha=0.20, label=f"CI ({int(bands.level*100)}%)")
 
@@ -196,5 +196,4 @@ def plot_synthetic_etf_smile(
         ax.legend(handles, labels, loc="best", fontsize=8)
 
     return bands
-
 

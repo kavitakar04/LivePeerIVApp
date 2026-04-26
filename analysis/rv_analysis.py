@@ -10,7 +10,8 @@ inside functions to avoid circular-import issues with analysis_pipeline.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Mapping, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, Optional
 import numpy as np
 import pandas as pd
 
@@ -22,6 +23,280 @@ def _safe_float(val) -> float:
         return f if np.isfinite(f) else np.nan
     except (TypeError, ValueError):
         return np.nan
+
+
+def _empty_dashboard() -> dict[str, Any]:
+    cols = [
+        "rank", "opportunity", "direction", "feature", "maturity", "spread",
+        "z_score", "percentile", "confidence", "event_context",
+        "spillover_support", "data_quality", "why", "what_differs",
+        "why_matters", "statistical_read", "comparability", "warnings",
+        "tradeability_score",
+    ]
+    return {
+        "executive_summary": [],
+        "context_cards": {
+            "strongest_dislocation": "Unavailable",
+            "most_tradeable": "Unavailable",
+            "most_systemic": "Unavailable",
+            "weakest_signal": "Unavailable",
+            "data_quality_warnings": 0,
+        },
+        "opportunities": pd.DataFrame(columns=cols),
+        "warnings": [],
+        "integration_status": {},
+    }
+
+
+def _label_feature(signal_type: str) -> str:
+    text = str(signal_type or "").lower()
+    if "atm" in text:
+        return "ATM"
+    if "skew" in text:
+        return "Skew"
+    if "curv" in text:
+        return "Curvature"
+    if "event" in text or "bump" in text:
+        return "Event Bump"
+    if "slope" in text or "level" in text or "term" in text or text.startswith("ts"):
+        return "Term Structure"
+    return "Surface"
+
+
+def _direction_from_spread(spread: float, eps: float = 1e-8) -> str:
+    if not np.isfinite(spread) or abs(spread) <= eps:
+        return "Neutral"
+    return "Rich" if spread > 0 else "Cheap"
+
+
+def _format_maturity(days: Any) -> str:
+    d = _safe_float(days)
+    if not np.isfinite(d) or d <= 0:
+        return "All"
+    return f"{int(round(d))}d"
+
+
+def _fmt_signed_pct(value: float) -> str:
+    if not np.isfinite(value):
+        return "n/a"
+    return f"{value:+.2%}"
+
+
+def _confidence_label(z: float, percentile: float, spillover_label: str, data_quality: str) -> tuple[str, float]:
+    z_abs = abs(z) if np.isfinite(z) else 0.0
+    pct_edge = abs(percentile - 50.0) / 50.0 if np.isfinite(percentile) else 0.0
+    score = min(1.0, 0.55 * min(z_abs / 3.0, 1.0) + 0.25 * pct_edge)
+    if "Strong" in spillover_label or "Suggestive" in spillover_label:
+        score += 0.15
+    if data_quality in {"Good", "Acceptable"}:
+        score += 0.10
+    if data_quality in {"Degraded", "Poor"}:
+        score -= 0.25
+    score = float(np.clip(score, 0.0, 1.0))
+    if score >= 0.75:
+        return "High", score
+    if score >= 0.45:
+        return "Medium", score
+    return "Low", score
+
+
+def _load_model_quality(target: str, peers: list[str], asof: str | None) -> tuple[str, list[str], dict[str, Any]]:
+    warnings: list[str] = []
+    meta: dict[str, Any] = {"model": "Unknown", "degraded_rows": 0, "rmse_max": np.nan}
+    try:
+        from analysis.model_params_logger import load_model_params
+
+        df = load_model_params()
+    except Exception as exc:
+        return "Unknown", [f"Model parameter log unavailable: {exc}"], meta
+
+    if df is None or df.empty:
+        return "Unknown", ["No logged model-fit parameters available."], meta
+
+    tickers = [target] + peers
+    work = df[df["ticker"].astype(str).str.upper().isin(tickers)].copy()
+    if asof is not None and "asof_date" in work:
+        asof_ts = pd.to_datetime(asof, errors="coerce")
+        if pd.notna(asof_ts):
+            work = work[pd.to_datetime(work["asof_date"], errors="coerce") <= asof_ts]
+    if work.empty:
+        return "Unknown", ["No model-fit parameters found for this peer group/date."], meta
+
+    latest_date = pd.to_datetime(work["asof_date"], errors="coerce").max()
+    latest = work[pd.to_datetime(work["asof_date"], errors="coerce") == latest_date]
+    models = sorted({str(m).upper() for m in latest.get("model", pd.Series(dtype=str)).dropna().unique()})
+    meta["model"] = ", ".join(models) if models else "Unknown"
+
+    degraded = 0
+    rmse_vals: list[float] = []
+    if "fit_meta" in latest:
+        for item in latest["fit_meta"]:
+            if isinstance(item, dict):
+                if bool(item.get("degraded")) or str(item.get("status", "")).lower() in {"degraded", "fallback"}:
+                    degraded += 1
+                rmse = _safe_float(item.get("rmse", item.get("RMSE", np.nan)))
+                if np.isfinite(rmse):
+                    rmse_vals.append(rmse)
+    if "param" in latest and "value" in latest:
+        rmse_rows = latest[latest["param"].astype(str).str.lower().isin({"rmse", "fit_rmse"})]
+        rmse_vals.extend([_safe_float(v) for v in rmse_rows["value"]])
+
+    rmse_vals = [v for v in rmse_vals if np.isfinite(v)]
+    rmse_max = max(rmse_vals) if rmse_vals else np.nan
+    meta["degraded_rows"] = degraded
+    meta["rmse_max"] = rmse_max
+
+    if degraded:
+        warnings.append(f"{degraded} logged fit rows are marked degraded.")
+    if np.isfinite(rmse_max) and rmse_max > 0.15:
+        warnings.append(f"High model RMSE observed ({rmse_max:.3f}).")
+
+    if warnings:
+        return "Degraded", warnings, meta
+    if models:
+        return "Good", [], meta
+    return "Unknown", ["Model used could not be identified from parameter log."], meta
+
+
+def _load_spillover_support(target: str, peers: list[str]) -> tuple[str, dict[str, Any], list[str]]:
+    path = Path(__file__).resolve().parents[1] / "data" / "spill_summary.parquet"
+    if not path.exists():
+        return "Unavailable", {}, ["Spillover summary has not been generated."]
+    try:
+        summary = pd.read_parquet(path)
+    except Exception as exc:
+        return "Unavailable", {}, [f"Spillover summary could not be read: {exc}"]
+    if summary.empty:
+        return "Unavailable", {}, ["Spillover summary is empty."]
+
+    target_u = target.upper()
+    peer_set = {p.upper() for p in peers}
+    work = summary.copy()
+    work["ticker"] = work["ticker"].astype(str).str.upper()
+    work["peer"] = work["peer"].astype(str).str.upper()
+    direct = work[(work["ticker"] == target_u) & (work["peer"].isin(peer_set))]
+    reverse = work[(work["peer"] == target_u) & (work["ticker"].isin(peer_set))]
+    rel = pd.concat([direct, reverse], ignore_index=True)
+    if rel.empty:
+        return "Unavailable", {}, ["No spillover rows match this target/peer group."]
+
+    if "h" in rel:
+        h1 = rel[pd.to_numeric(rel["h"], errors="coerce") == 1]
+        if not h1.empty:
+            rel = h1
+    hit = float(pd.to_numeric(rel.get("hit_rate"), errors="coerce").mean())
+    same = float(pd.to_numeric(rel.get("sign_concord"), errors="coerce").mean())
+    med = float(pd.to_numeric(rel.get("median_resp"), errors="coerce").median())
+    strength_counts = rel.get("strength", pd.Series(dtype=str)).astype(str).value_counts()
+    strength = strength_counts.index[0] if not strength_counts.empty else "Unknown"
+    meta = {
+        "hit_rate": hit,
+        "same_direction_probability": same,
+        "median_response": med,
+        "strength": strength,
+        "rows": int(len(rel)),
+    }
+    if strength in {"Strong", "Suggestive"}:
+        label = f"{strength} ({same:.0%} same-dir, {hit:.0%} hit)"
+    elif np.isfinite(same) and np.isfinite(hit):
+        label = f"Weak ({same:.0%} same-dir, {hit:.0%} hit)"
+    else:
+        label = "Weak"
+    return label, meta, []
+
+
+def _surface_comparability(target: str, peers: list[str], asof: str | None, max_expiries: int) -> tuple[str, dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    try:
+        from analysis.peer_composite_builder import build_surface_grids
+
+        surfaces = build_surface_grids([target] + peers, max_expiries=max_expiries)
+    except Exception as exc:
+        return "Unknown", {}, [f"Surface comparability unavailable: {exc}"]
+    if not surfaces or target not in surfaces:
+        return "Unknown", {}, ["No target surface grid available for comparability check."]
+
+    target_dates = sorted(surfaces.get(target, {}).keys())
+    if not target_dates:
+        return "Unknown", {}, ["No target surface dates available for comparability check."]
+    asof_ts = pd.to_datetime(asof, errors="coerce") if asof is not None else pd.NaT
+    if pd.notna(asof_ts):
+        eligible = [d for d in target_dates if pd.to_datetime(d) <= asof_ts]
+        date = eligible[-1] if eligible else target_dates[-1]
+    else:
+        date = target_dates[-1]
+    target_grid = surfaces[target].get(date)
+    if target_grid is None or target_grid.empty:
+        return "Unknown", {}, ["Target surface grid is empty."]
+
+    corrs: list[float] = []
+    common_counts: list[int] = []
+    for peer in peers:
+        peer_grid = surfaces.get(peer, {}).get(date)
+        if peer_grid is None or peer_grid.empty:
+            continue
+        rows = target_grid.index.intersection(peer_grid.index)
+        cols = target_grid.columns.intersection(peer_grid.columns)
+        if len(rows) == 0 or len(cols) == 0:
+            continue
+        a = target_grid.loc[rows, cols].to_numpy(float).ravel()
+        b = peer_grid.loc[rows, cols].to_numpy(float).ravel()
+        valid = np.isfinite(a) & np.isfinite(b)
+        common_counts.append(int(valid.sum()))
+        if valid.sum() >= 3:
+            corrs.append(float(np.corrcoef(a[valid], b[valid])[0, 1]))
+    avg_corr = float(np.nanmean(corrs)) if corrs else np.nan
+    avg_cells = float(np.nanmean(common_counts)) if common_counts else 0.0
+    meta = {"date": str(pd.to_datetime(date).date()), "avg_surface_corr": avg_corr, "avg_common_cells": avg_cells}
+    if not common_counts:
+        return "Unknown", meta, ["No common target/peer surface cells found."]
+    if np.isfinite(avg_corr) and avg_corr >= 0.75 and avg_cells >= 4:
+        return "Comparable", meta, []
+    if np.isfinite(avg_corr) and avg_corr >= 0.45:
+        warnings.append("Peer surfaces are only moderately similar.")
+        return "Mixed", meta, warnings
+    warnings.append("Peer surfaces have weak structural similarity.")
+    return "Poor", meta, warnings
+
+
+def _event_context(target: str, peers: list[str], asof: str | None, lookback: int) -> tuple[str, dict[str, Any], list[str]]:
+    try:
+        from analysis.analysis_pipeline import get_daily_iv_for_spillover
+
+        iv_df = get_daily_iv_for_spillover([target] + peers)
+    except Exception as exc:
+        return "Unknown", {}, [f"Peer date/event context unavailable: {exc}"]
+    if iv_df is None or iv_df.empty:
+        return "Unknown", {}, ["No daily ATM IV history available for event context."]
+    work = iv_df.copy()
+    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work["ticker"] = work["ticker"].astype(str).str.upper()
+    if asof is not None:
+        asof_ts = pd.to_datetime(asof, errors="coerce")
+        if pd.notna(asof_ts):
+            work = work[work["date"] <= asof_ts]
+    piv = work.pivot(index="date", columns="ticker", values="atm_iv").sort_index().tail(max(3, lookback))
+    if target not in piv or len(piv) < 2:
+        return "Unknown", {}, ["Insufficient daily ATM IV history for event context."]
+    ret = piv.pct_change().iloc[-1]
+    target_move = _safe_float(ret.get(target))
+    peer_moves = pd.to_numeric(ret.reindex(peers), errors="coerce").dropna()
+    if not np.isfinite(target_move) or peer_moves.empty:
+        return "Unknown", {}, ["Could not compute target/peer daily IV moves."]
+    same_share = float((np.sign(peer_moves) == np.sign(target_move)).mean())
+    peer_median = float(peer_moves.median())
+    peer_abs = float(peer_moves.abs().median())
+    meta = {
+        "target_move": target_move,
+        "peer_median_move": peer_median,
+        "same_direction_share": same_share,
+        "peer_abs_median_move": peer_abs,
+    }
+    if same_share >= 0.70 and peer_abs >= 0.005:
+        return "Systemic", meta, []
+    if 0.40 <= same_share < 0.70:
+        return "Cluster", meta, []
+    return "Idiosyncratic", meta, []
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +821,180 @@ def generate_rv_signals(
     return pd.concat([z_signals, other_signals], ignore_index=True)
 
 
+def generate_rv_opportunity_dashboard(
+    target: str,
+    peers: Iterable[str],
+    asof: Optional[str] = None,
+    weight_mode: str = "corr_iv_atm",
+    lookback: int = 60,
+    max_expiries: int = 6,
+    min_abs_z: float = 1.0,
+) -> dict[str, Any]:
+    """Return the synthesized RV Signals dashboard payload.
+
+    This is the final relative-value interpretation layer.  It consumes the
+    raw target-vs-peer signals, then attaches context from model-fit logs,
+    spillover summaries, surface-grid comparability, and peer date moves so the
+    GUI can show tradeable theses instead of a raw differences table.
+    """
+    target = target.upper().strip()
+    peer_list = [str(p).upper().strip() for p in peers if str(p).strip()]
+    dashboard = _empty_dashboard()
+    if not target or not peer_list:
+        dashboard["warnings"].append("Target and at least one peer are required.")
+        return dashboard
+
+    try:
+        raw = generate_rv_signals(
+            target=target,
+            peers=peer_list,
+            asof=asof,
+            weight_mode=weight_mode,
+            lookback=lookback,
+            max_expiries=max_expiries,
+            min_abs_z=min_abs_z,
+        )
+    except Exception as exc:
+        dashboard["warnings"].append(f"Raw RV signal generation failed: {exc}")
+        return dashboard
+
+    data_quality, model_warnings, model_meta = _load_model_quality(target, peer_list, asof)
+    spill_label, spill_meta, spill_warnings = _load_spillover_support(target, peer_list)
+    comparability, surface_meta, surface_warnings = _surface_comparability(target, peer_list, asof, max_expiries)
+    event_ctx, event_meta, event_warnings = _event_context(target, peer_list, asof, lookback)
+
+    warnings = model_warnings + spill_warnings + surface_warnings + event_warnings
+    dashboard["warnings"] = warnings
+    dashboard["integration_status"] = {
+        "model_quality": data_quality,
+        "model_meta": model_meta,
+        "spillover": spill_meta,
+        "surface_comparability": surface_meta,
+        "event_context": event_meta,
+        "weight_mode": weight_mode,
+    }
+
+    if raw is None or raw.empty:
+        dashboard["executive_summary"] = [
+            f"No RV opportunities passed the current threshold for {target}.",
+            f"Model quality: {data_quality}; surface comparability: {comparability}.",
+        ]
+        dashboard["context_cards"]["data_quality_warnings"] = len(warnings)
+        return dashboard
+
+    rows: list[dict[str, Any]] = []
+    for _, row in raw.iterrows():
+        signal_type = str(row.get("signal_type", "Signal"))
+        feature = _label_feature(signal_type)
+        spread = _safe_float(row.get("spread"))
+        z = _safe_float(row.get("z_score"))
+        pct = _safe_float(row.get("pct_rank"))
+        direction = _direction_from_spread(spread)
+        maturity = _format_maturity(row.get("T_days"))
+        confidence, confidence_score = _confidence_label(z, pct, spill_label, data_quality)
+        stat = (
+            f"Z-score {z:+.2f}; percentile {pct:.0f}."
+            if np.isfinite(z)
+            else "No historical z-score is available for this feature; rank uses current spread magnitude."
+        )
+        opportunity = f"{target} {maturity} {feature} {direction.lower()} vs peers"
+        why = f"{feature} spread is {_fmt_signed_pct(spread)} versus the weighted peer synthetic."
+        if np.isfinite(z) and abs(z) >= 2.0:
+            why = f"{why} The move is statistically unusual."
+        elif np.isfinite(z):
+            why = f"{why} The move is notable but below a 2-sigma threshold."
+        if event_ctx == "Systemic":
+            why = f"{why} Current peer moves look broad rather than single-name."
+        elif event_ctx == "Idiosyncratic":
+            why = f"{why} Current peer moves look more single-name."
+
+        row_warnings = list(warnings)
+        if comparability in {"Poor", "Unknown"}:
+            row_warnings.append(f"Structural comparability is {comparability.lower()}.")
+        if data_quality in {"Degraded", "Unknown"}:
+            row_warnings.append(f"Model/data quality is {data_quality.lower()}.")
+
+        tradeability = confidence_score
+        if direction == "Neutral":
+            tradeability -= 0.20
+        if event_ctx == "Idiosyncratic":
+            tradeability += 0.08
+        if event_ctx == "Systemic":
+            tradeability -= 0.05
+        if comparability == "Comparable":
+            tradeability += 0.10
+        elif comparability in {"Poor", "Unknown"}:
+            tradeability -= 0.20
+        tradeability = float(np.clip(tradeability, 0.0, 1.0))
+
+        rows.append({
+            "rank": 0,
+            "opportunity": opportunity,
+            "direction": direction,
+            "feature": feature,
+            "maturity": maturity,
+            "spread": spread,
+            "z_score": z,
+            "percentile": pct,
+            "confidence": confidence,
+            "event_context": event_ctx,
+            "spillover_support": spill_label,
+            "data_quality": data_quality,
+            "why": why,
+            "what_differs": (
+                f"{target} {feature.lower()} is {_fmt_signed_pct(spread)} "
+                f"{'above' if spread > 0 else 'below' if spread < 0 else 'in line with'} "
+                "the weighted peer synthetic."
+            ),
+            "why_matters": (
+                "This is the surface feature most directly tied to the thesis; "
+                "rich readings suggest sale/relative-short-vol candidates, while cheap readings suggest ownership/relative-long-vol candidates."
+            ),
+            "statistical_read": stat,
+            "comparability": f"{comparability} surface match",
+            "warnings": "; ".join(dict.fromkeys(row_warnings)) if row_warnings else "",
+            "tradeability_score": tradeability,
+        })
+
+    opp = pd.DataFrame(rows)
+    opp = opp.sort_values(
+        ["tradeability_score", "z_score", "spread"],
+        key=lambda s: s.abs() if s.name in {"z_score", "spread"} else s,
+        ascending=False,
+    ).reset_index(drop=True)
+    opp["rank"] = np.arange(1, len(opp) + 1)
+    dashboard["opportunities"] = opp
+
+    strongest = opp.iloc[opp["spread"].abs().argmax()] if not opp.empty else None
+    tradeable = opp.iloc[0] if not opp.empty else None
+    systemic = opp[opp["event_context"] == "Systemic"].head(1)
+    weakest = opp.sort_values("tradeability_score", ascending=True).head(1)
+    dashboard["context_cards"] = {
+        "strongest_dislocation": strongest["opportunity"] if strongest is not None else "Unavailable",
+        "most_tradeable": tradeable["opportunity"] if tradeable is not None else "Unavailable",
+        "most_systemic": systemic.iloc[0]["opportunity"] if not systemic.empty else "No systemic signal",
+        "weakest_signal": weakest.iloc[0]["opportunity"] if not weakest.empty else "Unavailable",
+        "data_quality_warnings": len(warnings),
+    }
+
+    summary: list[str] = []
+    for _, r in opp.head(3).iterrows():
+        z_text = f" z={float(r['z_score']):+.1f}" if np.isfinite(_safe_float(r["z_score"])) else ""
+        summary.append(
+            f"{r['opportunity']} with {str(r['confidence']).lower()} confidence{z_text}."
+        )
+    if event_ctx == "Systemic":
+        summary.append("Latest ATM move appears sector-wide, so idiosyncratic RV conviction is lower.")
+    elif event_ctx == "Idiosyncratic":
+        summary.append(f"Latest ATM move is concentrated in {target}, supporting an idiosyncratic RV read.")
+    if spill_label != "Unavailable":
+        summary.append(f"Spillover read: {spill_label}, relevant for convergence or propagation logic.")
+    if warnings:
+        summary.append(f"{len(warnings)} data/model warning(s) should be reviewed before trading.")
+    dashboard["executive_summary"] = summary[:5]
+    return dashboard
+
+
 # ---------------------------------------------------------------------------
 # Phase 5 — Weight stability
 # ---------------------------------------------------------------------------
@@ -621,5 +1070,6 @@ __all__ = [
     "compute_skew_spread",
     "compute_term_shape_dislocation",
     "generate_rv_signals",
+    "generate_rv_opportunity_dashboard",
     "compute_weight_stability",
 ]

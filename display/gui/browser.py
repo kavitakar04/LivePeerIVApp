@@ -21,16 +21,25 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.analysis_pipeline import available_tickers, available_dates, ingest_and_process
+from analysis.data_availability_service import available_tickers, available_dates, ingest_and_process
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager, plot_id
 from display.gui.spillover_gui import SpilloverFrame
-from display.gui.parameters_tab import ParametersTab
+from display.gui.parameters_tab import DiagnosticsTab, ParametersTab
 from display.gui.rv_signals_tab import RVSignalsFrame
 
 
+BROWSER_TAB_LABELS = (
+    "IV Explorer",
+    "Settings / Status",
+    "Parameter Summary",
+    "Spillover",
+    "RV Signals",
+)
+
+
 class BrowserApp(tk.Tk):
-    def __init__(self, *, overlay_synth: bool = True, overlay_peers: bool = True,
+    def __init__(self, *, overlay_synth: bool = True, overlay_peers: bool = False,
                  ci_percent: float = 68.0):
         super().__init__()
         self.title("Implied Volatility Browser")
@@ -44,12 +53,23 @@ class BrowserApp(tk.Tk):
         # ---- Main exploration tab ----
         self.tab_browser = ttk.Frame(self.notebook)
         # Clarify purpose: this tab lets users explore IV surfaces
-        self.notebook.add(self.tab_browser, text="IV Explorer")
+        self.notebook.add(self.tab_browser, text=BROWSER_TAB_LABELS[0])
+
+        # ---- Settings / Status tab ----
+        self.tab_settings = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_settings, text=BROWSER_TAB_LABELS[1])
+
+        self.settings_controls = ttk.Frame(self.tab_settings)
+        self.settings_controls.pack(side=tk.TOP, fill=tk.X)
+
+        status_frame = ttk.LabelFrame(self.tab_settings, text="Data Integrity / Model Diagnostics")
+        status_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         # Inputs
         self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
                                  overlay_peers=overlay_peers,
-                                 ci_percent=ci_percent)
+                                 ci_percent=ci_percent,
+                                 settings_parent=self.settings_controls)
         # Bind events
         self.inputs.bind_download(self._on_download)
         self.inputs.bind_plot(self._refresh_plot)
@@ -104,17 +124,21 @@ class BrowserApp(tk.Tk):
         self.plot_mgr = PlotManager()
         self.plot_mgr.attach_canvas(self.canvas)
 
+        # ---- Status diagnostics table ----
+        self.tab_diagnostics = DiagnosticsTab(status_frame)
+        self.tab_diagnostics.pack(fill=tk.BOTH, expand=True)
+
         # ---- Parameter summary tab ----
         self.tab_params = ParametersTab(self.notebook)
-        self.notebook.add(self.tab_params, text="Parameter Summary")
+        self.notebook.add(self.tab_params, text=BROWSER_TAB_LABELS[2])
 
         # ---- Spillover tab ----
         self.tab_spillover = SpilloverFrame(self.notebook, input_panel=self.inputs)
-        self.notebook.add(self.tab_spillover, text="Spillover")
+        self.notebook.add(self.tab_spillover, text=BROWSER_TAB_LABELS[3])
 
         # ---- RV Signals tab ----
         self.tab_rv_signals = RVSignalsFrame(self.notebook, input_panel=self.inputs)
-        self.notebook.add(self.tab_rv_signals, text="RV Signals")
+        self.notebook.add(self.tab_rv_signals, text=BROWSER_TAB_LABELS[4])
 
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
@@ -260,7 +284,7 @@ class BrowserApp(tk.Tk):
                             self.canvas.draw()
                             self._update_nav_buttons()
                             self._update_animation_buttons()
-                            self.tab_params.update(self.plot_mgr.last_fit_info)
+                            self._sync_plot_status()
                         except Exception as exc:
                             messagebox.showerror("Plot error", str(exc))
                             self.status.config(text="Plot failed")
@@ -277,8 +301,7 @@ class BrowserApp(tk.Tk):
                         self.status.config(text="Ready")
                         self._update_nav_buttons()
                         self._update_animation_buttons()
-                        self.tab_params.update(self.plot_mgr.last_fit_info)
-                        self.lbl_desc.config(text=self.plot_mgr.last_description)
+                        self._sync_plot_status()
                     self.after(0, finish)
 
             except Exception as e:
@@ -295,12 +318,17 @@ class BrowserApp(tk.Tk):
     def _prev_expiry(self):
         self.plot_mgr.prev_expiry()
         self.canvas.draw()
-        self.lbl_desc.config(text=self.plot_mgr.last_description)
+        self._sync_plot_status()
 
     def _next_expiry(self):
         self.plot_mgr.next_expiry()
         self.canvas.draw()
+        self._sync_plot_status()
+
+    def _sync_plot_status(self):
         self.lbl_desc.config(text=self.plot_mgr.last_description)
+        self.tab_params.update(self.plot_mgr.last_fit_info)
+        self.tab_diagnostics.update(self.plot_mgr.last_fit_info)
 
     def _update_nav_buttons(self):
         state = tk.NORMAL if self.plot_mgr.is_smile_active() else tk.DISABLED
@@ -366,7 +394,12 @@ class BrowserApp(tk.Tk):
 
 def main():
         parser = argparse.ArgumentParser(description="Vol Browser")
-        parser.add_argument("--overlay-synth", action="store_true", help="Overlay synthetic curves")
+        parser.add_argument(
+            "--overlay-synth",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Overlay synthetic curves",
+        )
         parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
         parser.add_argument("--ci", type=float, default=68.0,
                             help="Confidence interval percentage (e.g. 95 for 95%)")

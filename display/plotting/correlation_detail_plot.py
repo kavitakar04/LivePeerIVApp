@@ -197,7 +197,6 @@ def _reserve_correlation_layout(
     ax: plt.Axes,
     *,
     has_weights: bool,
-    has_coverage: bool,
 ) -> tuple[plt.Axes, Optional[plt.Axes], Optional[plt.Axes]]:
     """Lay out the heatmap and optional side panels in non-overlapping slots."""
     fig = ax.figure
@@ -206,21 +205,13 @@ def _reserve_correlation_layout(
         sp = fig.subplotpars
         fig._orig_subplotpars = (sp.left, sp.right, sp.bottom, sp.top)
 
-    if has_weights or has_coverage:
-        ax.set_position([0.08, 0.16, 0.62, 0.68])
+    if has_weights:
+        ax.set_position([0.08, 0.16, 0.58, 0.68])
         main = ax.get_position()
-        side_x = main.x1 + 0.045
+        side_x = main.x1 + 0.105
         side_w = max(0.12, 0.96 - side_x)
-        weight_ax = None
-        coverage_ax = None
-        if has_weights and has_coverage:
-            weight_ax = fig.add_axes([side_x, main.y0 + main.height * 0.52, side_w, main.height * 0.36])
-            coverage_ax = fig.add_axes([side_x, main.y0 + main.height * 0.04, side_w, main.height * 0.30])
-        elif has_weights:
-            weight_ax = fig.add_axes([side_x, main.y0 + main.height * 0.24, side_w, main.height * 0.52])
-        else:
-            coverage_ax = fig.add_axes([side_x, main.y0 + main.height * 0.24, side_w, main.height * 0.52])
-        return ax, weight_ax, coverage_ax
+        weight_ax = fig.add_axes([side_x, main.y0 + main.height * 0.24, side_w, main.height * 0.52])
+        return ax, weight_ax, None
 
     if hasattr(fig, "_orig_position"):
         ax.set_position(fig._orig_position)
@@ -241,7 +232,7 @@ def plot_correlation_details(
     max_expiries: Optional[int] = None,
 ) -> None:
     """
-    Heatmap of the correlation matrix with optional weight and coverage panels.
+    Heatmap of the correlation matrix with an optional peer-weight panel.
 
     The matrix is a diagnostic for pairwise similarity across expiry-rank ATM
     IV features.  Weights may come from a different method/basis, so they are
@@ -285,11 +276,9 @@ def plot_correlation_details(
     coverage = view_data.coverage if view_data is not None else _coverage_by_ticker(corr_df, atm_df)
     overlap = view_data.overlap if view_data is not None else _overlap_counts(corr_df, atm_df)
     has_weights = bool(weights is not None and not weights.dropna().empty)
-    has_coverage = bool(not coverage.empty)
     _, weight_ax, cov_ax = _reserve_correlation_layout(
         ax,
         has_weights=has_weights,
-        has_coverage=has_coverage,
     )
     min_overlap = None
     if overlap is not None and len(overlap) > 1:
@@ -408,22 +397,6 @@ def plot_correlation_details(
             for i, v in enumerate(w_sorted.to_numpy(float)):
                 weight_ax.text(v, i, f"{v:.2f}", va="center", ha="left", fontsize=8)
             fig._corr_weight_ax = weight_ax
-
-    if has_coverage and cov_ax is not None:
-        cov = coverage.sort_values(ascending=True)
-        cov_ax.barh(range(len(cov)), cov.to_numpy(float), color="#7f8c8d", alpha=0.8)
-        cov_ax.set_yticks(range(len(cov)))
-        cov_ax.set_yticklabels(cov.index, fontsize=8)
-        cov_ax.set_xlim(0, max(float(cov.max()), float(max_expiries or cov.max() or 1)))
-        cov_ax.set_title("ATM Coverage", fontsize=10)
-        cov_ax.set_xlabel("expiry ranks", fontsize=8)
-        cov_ax.tick_params(axis="x", labelsize=8)
-        cov_ax.grid(axis="x", alpha=0.25)
-        for spine in ("top", "right"):
-            cov_ax.spines[spine].set_visible(False)
-        for i, v in enumerate(cov.to_numpy(float)):
-            cov_ax.text(v, i, f" {int(v)}", va="center", fontsize=8)
-        fig._corr_coverage_ax = cov_ax
 
 
 def scatter_corr_matrix(

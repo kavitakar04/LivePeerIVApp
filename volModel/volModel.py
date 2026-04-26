@@ -14,8 +14,9 @@ except Exception:
 from .sviFit import fit_svi_slice, svi_smile_iv
 from .sabrFit import fit_sabr_slice, sabr_smile_iv
 from .polyFit import fit_poly
+from .models import SUPPORTED_MODELS
 
-ModelName = Literal["svi", "sabr", "poly"]
+ModelName = Literal["svi", "sabr", "tps", "poly"]
 
 @dataclass
 class SliceParams:
@@ -27,12 +28,15 @@ class SliceParams:
 class VolModel:
     """
     Fit a per-day, per-ticker volatility smile model across expiries.
-    - fit(model='svi'|'sabr'|'poly'): calibrates each expiry slice independently
+    - fit(model='svi'|'sabr'|'tps'|'poly'): calibrates each expiry slice independently
     - predict_iv(K, T): get IV at a (K, T)
     - smile(Ks, T): full smile at a given expiry
     - plot(T): quick visualization (if matplotlib available)
     """
     def __init__(self, model: ModelName = "svi", poly_method: str = "tps"):
+        model = model.lower()
+        if model not in SUPPORTED_MODELS:
+            raise ValueError(f"unsupported volatility model: {model}")
         self.model: ModelName = model
         self.poly_method: str = poly_method  # for polynomial fit: 'simple' or 'tps'
         self.S: Optional[float] = None
@@ -74,10 +78,12 @@ class VolModel:
                 out = fit_svi_slice(S, K_slice, float(T), iv_slice)
             elif self.model == "sabr":
                 out = fit_sabr_slice(S, K_slice, float(T), iv_slice, beta=self.beta_fixed)
-            else:  # polynomial fit
+            elif self.model in ("tps", "poly"):
                 k_slice = np.log(np.clip(K_slice, 1e-12, None) / self.S)
                 W_slice = W[m] if W is not None else None
                 out = fit_poly(k_slice, iv_slice, weights=W_slice, method=self.poly_method)
+            else:
+                raise ValueError(f"unsupported volatility model: {self.model}")
             self.slices[float(T)] = SliceParams(T=float(T), n=int(out.get("n", len(K_slice))), rmse=float(out.get("rmse", np.nan)), params=out)
         return self
 

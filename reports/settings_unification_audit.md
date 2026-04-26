@@ -74,19 +74,7 @@ The settings panel should expose the GUI/default workflow pillars first. The
 near-term default should either be retired or explicitly labeled as a legacy
 ATM-extraction default after caller migration.
 
-## Recommended GUI Settings Panel
+## Settings Panel Follow-Up
 
-Create a dedicated Settings tab or modal with sections:
-
-- Data/expiry: max expiries, pillar days, pillar tolerance
-- ATM/term structure: ATM band, CI level
-- Weighting: method, feature mode, weight power, clip negative weights,
-  advanced ATM band/tolerance
-- Surface features: tenors, moneyness bins
-- Relative value: lookback days
-- Spillover: threshold, lookback/window, response horizons
-- Cache: TTL and clear-cache action
-
-Settings should be stored as one typed `AnalysisDefaults`-like object and
-serialized to user preferences. The current plot settings dict can then carry
-overrides from that object into plot calls.
+The settings-panel work from this audit was migrated to `TASKS.MD` as
+`TASK-011`.

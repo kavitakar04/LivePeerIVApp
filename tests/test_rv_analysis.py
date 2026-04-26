@@ -320,6 +320,97 @@ class TestGenerateRVSignals:
 
 
 # ---------------------------------------------------------------------------
+# generate_rv_opportunity_dashboard - synthesis layer
+# ---------------------------------------------------------------------------
+
+class TestGenerateRVOpportunityDashboard:
+    def test_dashboard_turns_raw_signal_into_ranked_opportunity(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["ATM Level"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [30],
+            "value": [0.22],
+            "synth_value": [0.18],
+            "spread": [0.04],
+            "z_score": [2.4],
+            "pct_rank": [94.0],
+            "description": ["SPY ATM vol vs synthetic at 30d"],
+        })
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (80% same-dir, 70% hit)", {"strength": "Strong"}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.9}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.2}, []))
+
+        payload = generate_rv_opportunity_dashboard(
+            "SPY", ["QQQ", "IWM"], asof="2024-01-15", weight_mode="corr_iv_atm"
+        )
+
+        opp = payload["opportunities"]
+        assert len(opp) == 1
+        row = opp.iloc[0]
+        assert row["rank"] == 1
+        assert row["direction"] == "Rich"
+        assert row["feature"] == "ATM"
+        assert row["maturity"] == "30d"
+        assert row["confidence"] == "High"
+        assert "SPY 30d ATM rich vs peers" in row["opportunity"]
+        assert payload["context_cards"]["data_quality_warnings"] == 0
+        assert payload["executive_summary"]
+
+    def test_dashboard_preserves_degraded_context_as_warning(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["Curvature"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [26],
+            "value": [0.05],
+            "synth_value": [0.02],
+            "spread": [0.03],
+            "z_score": [np.nan],
+            "pct_rank": [np.nan],
+            "description": ["SPY curvature"],
+        })
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Degraded", ["1 logged fit row is marked degraded."], {"model": "AUTO"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Unavailable", {}, ["Spillover summary has not been generated."]))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Poor", {"avg_surface_corr": 0.1}, ["Peer surfaces have weak structural similarity."]))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Cluster", {}, []))
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ"], asof="2024-01-15")
+        row = payload["opportunities"].iloc[0]
+
+        assert row["data_quality"] == "Degraded"
+        assert row["feature"] == "Curvature"
+        assert "degraded" in row["warnings"].lower()
+        assert payload["context_cards"]["data_quality_warnings"] == 3
+
+    def test_event_context_classifies_broad_move_as_systemic(self, monkeypatch):
+        from analysis import analysis_pipeline
+        from analysis.rv_analysis import _event_context
+
+        df = pd.DataFrame({
+            "date": ["2024-01-14", "2024-01-14", "2024-01-14", "2024-01-15", "2024-01-15", "2024-01-15"],
+            "ticker": ["SPY", "QQQ", "IWM", "SPY", "QQQ", "IWM"],
+            "atm_iv": [0.20, 0.21, 0.22, 0.22, 0.225, 0.235],
+        })
+        monkeypatch.setattr(analysis_pipeline, "get_daily_iv_for_spillover", lambda tickers: df)
+
+        label, meta, warnings = _event_context("SPY", ["QQQ", "IWM"], "2024-01-15", 60)
+
+        assert label == "Systemic"
+        assert meta["same_direction_share"] == 1.0
+        assert warnings == []
+
+
+# ---------------------------------------------------------------------------
 # compute_weight_stability
 # ---------------------------------------------------------------------------
 
@@ -375,8 +466,6 @@ def test_rv_plots_importable():
     from display.plotting.rv_plots import (
         plot_surface_residual_heatmap,
         plot_skew_spread,
-        plot_rv_signals_table,
     )
     assert callable(plot_surface_residual_heatmap)
     assert callable(plot_skew_spread)
-    assert callable(plot_rv_signals_table)

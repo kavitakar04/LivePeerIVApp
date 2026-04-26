@@ -5,7 +5,7 @@ GUI-ready analysis orchestrator.
 This module wires together:
 - ingest + enrich (data.historical_saver)
 - surface grid building
-- synthetic ETF surface construction (surface & ATM pillars)
+- peer composite surface construction (surface & ATM pillars)
 - vol betas (UL, IV-ATM, Surface)
 - lightweight snapshot/smile helpers for GUI
 
@@ -37,7 +37,7 @@ from data.quote_quality import (
 )
 from volModel.volModel import VolModel
 
-from .syntheticETFBuilder import (
+from .peer_composite_builder import (
     build_surface_grids,
     DEFAULT_TENORS,
     DEFAULT_MNY_BINS,
@@ -45,20 +45,18 @@ from .syntheticETFBuilder import (
     build_synthetic_iv as build_synthetic_iv_pillars,
 )
 
-from .beta_builder import (
-    peer_weights_from_correlations,
-    build_vol_betas,
-    save_correlations,
-)
-from .pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS, _fit_smile_get_atm, compute_atm_by_expiry, DEFAULT_PILLARS_DAYS, atm_curve_for_ticker_on_date
+from .weight_service import compute_peer_weights
+from .beta_builder import build_vol_betas, save_correlations
+from .pillar_selection import nearest_pillars
+from .atm_extraction import fit_smile_get_atm, compute_atm_by_expiry, atm_curve_for_ticker_on_date
+from .pillars import load_atm, DEFAULT_PILLARS_DAYS
 from .correlation_utils import (
     compute_atm_corr_pillar_free,
     corr_weights,
 )
-from volModel.sviFit import fit_svi_slice
-from volModel.sabrFit import fit_sabr_slice
+from .model_fit_service import fit_model_params, quality_checked_result
 from .model_params_logger import append_params, load_model_params
-from .confidence_bands import synthetic_etf_pillar_bands
+from .confidence_bands import peer_composite_pillar_bands
 from .settings import (
     DEFAULT_ATM_BAND,
     DEFAULT_CI,
@@ -192,14 +190,14 @@ def surface_to_frame_for_date(
     return {t: dct[date] for t, dct in surfaces.items() if date in dct}
 
 # -----------------------------------------------------------------------------
-# Synthetic ETF (surface & ATM pillars)
+# Peer-composite surface & ATM pillars
 # -----------------------------------------------------------------------------
 def build_synthetic_surface(
     weights: Mapping[str, float],
     cfg: PipelineConfig = PipelineConfig(),
     most_recent_only: bool = True,  # default to True for performance
 ) -> Dict[pd.Timestamp, pd.DataFrame]:
-    """Create a synthetic ETF surface from ticker grids + weights."""
+    """Create a peer composite surface from ticker grids + weights."""
     w = {k.upper(): float(v) for k, v in weights.items()}
     surfaces = build_surfaces(tickers=list(w.keys()), cfg=cfg, most_recent_only=most_recent_only)
     return combine_surfaces(surfaces, w)
@@ -213,35 +211,6 @@ def build_synthetic_iv_series(
     """Create a weighted ATM pillar IV time series."""
     w = {k.upper(): float(v) for k, v in weights.items()}
     return build_synthetic_iv_pillars(w, pillar_days=pillar_days, tolerance_days=tolerance_days)
-
-# -----------------------------------------------------------------------------
-# Weights (modern unified first, legacy fallback kept)
-# -----------------------------------------------------------------------------
-def compute_peer_weights(
-    target: str,
-    peers: Iterable[str],
-    weight_mode: str = "corr_iv_atm",
-    asof: str | None = None,
-    pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
-    tenor_days: Iterable[int] = DEFAULT_TENORS,
-    mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
-) -> pd.Series:
-    """Compute portfolio weights via unified weight computation."""
-    target = target.upper()
-    peers = [p.upper() for p in peers]
-
-    from analysis.unified_weights import compute_unified_weights
-
-    return compute_unified_weights(
-        target=target,
-        peers=peers,
-        mode=weight_mode,
-        asof=asof,
-        pillars_days=pillar_days,
-        tenors=tenor_days,
-        mny_bins=mny_bins,
-    )
-
 
 # -----------------------------------------------------------------------------
 # Betas
@@ -380,10 +349,11 @@ def relative_value_atm_report_corrweighted(
     Compute relative value (spread/z/pct) using correlation-based peer weights.
     Returns (rv_dataframe, weights_used).
     """
-    w = peer_weights_from_correlations(
-        benchmark=target,
+    weight_mode = mode if mode.startswith(("corr_", "pca_", "cosine_")) or mode in ("oi", "equal") else f"corr_{mode}"
+    w = compute_peer_weights(
+        target=target,
         peers=peers,
-        mode=mode,
+        weight_mode=weight_mode,
         pillar_days=pillar_days,
         tenor_days=DEFAULT_TENORS,
         mny_bins=DEFAULT_MNY_BINS,
@@ -794,33 +764,60 @@ def prepare_smile_data(
                 return None
             return sub.set_index("param")["value"].to_dict()
 
+        quality_map: Dict[str, Dict[str, Any]] = {}
+        fallback_map = {"svi": "none", "sabr": "none", "tps": "none"}
+
         svi_params = _cached("svi")
         if not svi_params:
-            svi_params = fit_svi_slice(S, K, T_val, IV)
+            svi_params, quality_map["svi"] = quality_checked_result(
+                "svi",
+                fit_model_params("svi", S, K, T_val, IV),
+                S,
+                K,
+                T_val,
+                IV,
+            )
             try:
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
+                if svi_params:
+                    append_params(asof, target, exp_str, "svi", svi_params, meta={"rmse": svi_params.get("rmse")})
             except Exception:
                 pass
 
         sabr_params = _cached("sabr")
         if not sabr_params:
-            sabr_params = fit_sabr_slice(S, K, T_val, IV)
+            sabr_params, quality_map["sabr"] = quality_checked_result(
+                "sabr",
+                fit_model_params("sabr", S, K, T_val, IV),
+                S,
+                K,
+                T_val,
+                IV,
+            )
             try:
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
+                if sabr_params:
+                    append_params(asof, target, exp_str, "sabr", sabr_params, meta={"rmse": sabr_params.get("rmse")})
             except Exception:
                 pass
 
         tps_params = _cached("tps")
         if not tps_params:
             try:
-                from volModel.polyFit import fit_tps_slice
-                tps_params = fit_tps_slice(S, K, T_val, IV)
+                tps_params, quality_map["tps"] = quality_checked_result(
+                    "tps",
+                    fit_model_params("tps", S, K, T_val, IV),
+                    S,
+                    K,
+                    T_val,
+                    IV,
+                )
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
-                append_params(asof, target, exp_str, "tps", tps_params, meta={"rmse": tps_params.get("rmse")})
+                if tps_params:
+                    append_params(asof, target, exp_str, "tps", tps_params, meta={"rmse": tps_params.get("rmse")})
             except Exception:
                 tps_params = {}
+                quality_map["tps"] = {"ok": False, "reason": "fit failed", "rmse": np.nan, "min_iv": np.nan, "max_iv": np.nan, "n": int(np.isfinite(IV).sum())}
 
         sens_params = _cached("sens")
         if not sens_params:
@@ -829,7 +826,7 @@ def prepare_smile_data(
                 dfe["moneyness"] = dfe["K"].astype(float) / float(S)
             except Exception:
                 dfe["moneyness"] = np.nan
-            sens = _fit_smile_get_atm(dfe, model="auto")
+            sens = fit_smile_get_atm(dfe, model="auto")
             sens_params = {k: sens[k] for k in ("atm_vol", "skew", "curv") if k in sens}
             try:
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
@@ -843,6 +840,8 @@ def prepare_smile_data(
             "tps": tps_params,
             "sens": sens_params,
             "expiry": str(expiry_dt) if expiry_dt is not None else None,
+            "quality": quality_map,
+            "fallback": fallback_map,
         }
 
     fit_entry = fit_by_expiry.get(T0, {})
@@ -907,6 +906,68 @@ def prepare_smile_data(
         "fit_by_expiry": fit_by_expiry,
     }
 
+
+def _compute_term_atm_curve(
+    ticker: str,
+    asof: str,
+    *,
+    atm_band: float,
+    min_boot: int,
+    ci: float,
+    max_expiries: int,
+) -> pd.DataFrame:
+    df = get_smile_slice(ticker, asof, T_target_years=None, max_expiries=max_expiries)
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return compute_atm_by_expiry(
+        df,
+        atm_band=atm_band,
+        method="fit",
+        model="auto",
+        vega_weighted=True,
+        n_boot=min_boot,
+        ci_level=ci,
+    )
+
+
+def _log_term_atm_curve(
+    *,
+    ticker: str,
+    role: str,
+    curve: pd.DataFrame,
+    weight: float | None = None,
+    alignment: str = "raw",
+) -> None:
+    if curve is None or curve.empty:
+        logger.warning(
+            "term ATM extraction ticker=%s role=%s status=empty assigned_weight=%s alignment=%s",
+            ticker,
+            role,
+            weight,
+            alignment,
+        )
+        return
+    for _, row in curve.iterrows():
+        logger.info(
+            "term ATM extraction ticker=%s role=%s expiry=%s T=%.6f spot=%s atm_strike=%s "
+            "atm_iv=%s iv_source=%s valid_options=%s model=%s extraction_status=%s "
+            "assigned_weight=%s alignment=%s",
+            ticker,
+            role,
+            row.get("expiry", ""),
+            float(row.get("T", np.nan)),
+            row.get("spot", np.nan),
+            row.get("atm_strike", np.nan),
+            row.get("atm_vol", np.nan),
+            row.get("iv_source", "sigma"),
+            row.get("count", np.nan),
+            row.get("model", "unknown"),
+            row.get("extraction_status", row.get("model", "unknown")),
+            weight,
+            alignment,
+        )
+
+
 def prepare_term_data(
     target: str,
     asof: str,
@@ -924,25 +985,26 @@ def prepare_term_data(
     constructed, regardless of whether it will be rendered.
     """
 
-    df_all = get_smile_slice(target, asof, T_target_years=None, max_expiries=max_expiries)
-    if df_all is None or df_all.empty:
-        return {}
-
     min_boot = 64 if (ci and ci > 0) else 0
-    atm_curve = compute_atm_by_expiry(
-        df_all,
+    atm_curve = _compute_term_atm_curve(
+        target,
+        asof,
         atm_band=atm_band,
-        method="fit",
-        model="auto",
-        vega_weighted=True,
-        n_boot=min_boot,
-        ci_level=ci,
+        min_boot=min_boot,
+        ci=ci,
+        max_expiries=max_expiries,
     )
+    if atm_curve is None or atm_curve.empty:
+        return {}
+    _log_term_atm_curve(ticker=target, role="target", curve=atm_curve, alignment="raw")
 
     synth_curve = None
     synth_bands = None
     peer_curves: Dict[str, pd.DataFrame] = {}
     weight_series = pd.Series(dtype=float)
+    term_warnings: list[str] = []
+    alignment_status = "raw"
+    composite_status = "not_requested"
 
     if peers:
         w = pd.Series(weights if weights else {p: 1.0 for p in peers}, dtype=float)
@@ -954,17 +1016,31 @@ def prepare_term_data(
 
         curves: Dict[str, pd.DataFrame] = {}
         for p in peers:
-            c = atm_curve_for_ticker_on_date(
-                get_smile_slice,
+            c = _compute_term_atm_curve(
                 p,
                 asof,
                 atm_band=atm_band,
-                method="median",
-                model="auto",
-                vega_weighted=False,
+                min_boot=0,
+                ci=ci,
+                max_expiries=max_expiries,
             )
             if not c.empty:
                 curves[p] = c
+                _log_term_atm_curve(
+                    ticker=p,
+                    role="peer",
+                    curve=c,
+                    weight=float(w.get(p, np.nan)),
+                    alignment="raw",
+                )
+            else:
+                _log_term_atm_curve(
+                    ticker=p,
+                    role="peer",
+                    curve=c,
+                    weight=float(w.get(p, np.nan)),
+                    alignment="raw",
+                )
         peer_curves = curves
 
         if curves:
@@ -978,6 +1054,7 @@ def prepare_term_data(
                     break
 
             if common_T.size > 0:
+                alignment_status = "aligned"
                 common_T = np.sort(common_T)
                 # Filter target curve to common expiries
                 atm_curve = atm_curve[
@@ -1001,9 +1078,14 @@ def prepare_term_data(
                     pillar_days = common_T * 365.25
                     level = float(ci) if ci and float(ci) <= 1.0 else float(ci) / 100.0 if ci and ci > 0 else 0.68
                     n_boot = max(min_boot, 1)
-                    synth_bands = synthetic_etf_pillar_bands(
+                    aligned_weights = w.reindex(list(atm_data)).dropna()
+                    if aligned_weights.sum() <= 0:
+                        aligned_weights = pd.Series(1.0, index=list(atm_data), dtype=float)
+                    aligned_weights = aligned_weights / aligned_weights.sum()
+                    weight_series = aligned_weights.copy()
+                    synth_bands = peer_composite_pillar_bands(
                         atm_data,
-                        w.to_dict(),
+                        aligned_weights.to_dict(),
                         pillar_days,
                         level=level,
                         n_boot=n_boot,
@@ -1016,6 +1098,38 @@ def prepare_term_data(
                             "atm_hi": synth_bands.hi,
                         }
                     )
+                    composite_status = "aligned_weighted"
+                    logger.info(
+                        "term peer composite built target=%s asof=%s alignment=%s common_expiries=%s weights=%s",
+                        target,
+                        asof,
+                        alignment_status,
+                        [float(x) for x in common_T],
+                        aligned_weights.to_dict(),
+                    )
+                else:
+                    composite_status = "invalid_no_aligned_peer_values"
+                    term_warnings.append("Peer maturities overlap target, but no peer has a complete aligned ATM curve.")
+            else:
+                alignment_status = "raw_no_overlap"
+                composite_status = "invalid_no_maturity_overlap"
+                term_warnings.append("Target and peer maturities do not overlap within 10 calendar days; peer lines are raw and no weighted composite was built.")
+        elif peers:
+            composite_status = "invalid_no_peer_curves"
+            term_warnings.append("No peer ATM curves were available for the selected date.")
+
+        if peer_curves:
+            target_vals = atm_curve["atm_vol"].to_numpy(float)
+            target_med = float(np.nanmedian(target_vals)) if target_vals.size else np.nan
+            for p, c in peer_curves.items():
+                peer_med = float(np.nanmedian(c["atm_vol"].to_numpy(float))) if not c.empty else np.nan
+                if np.isfinite(target_med) and np.isfinite(peer_med) and abs(peer_med - target_med) > 0.30:
+                    msg = (
+                        f"Extreme peer ATM level difference: {p} median {peer_med:.1%} "
+                        f"vs {target} median {target_med:.1%}."
+                    )
+                    term_warnings.append(msg)
+                    logger.warning("term peer overlay warning target=%s peer=%s reason=%s", target, p, msg)
 
     return {
         "atm_curve": atm_curve,
@@ -1023,6 +1137,9 @@ def prepare_term_data(
         "synth_bands": synth_bands,
         "peer_curves": peer_curves,
         "weights": weight_series,
+        "alignment_status": alignment_status,
+        "composite_status": composite_status,
+        "term_warnings": term_warnings,
     }
 
 

@@ -442,7 +442,12 @@ def peer_weights_from_correlations(
     clip_negative: bool = True,
     power: float = 1.0,
 ) -> pd.Series:
-    """Convert correlation/beta metrics into normalized peer weights."""
+    """Deprecated compatibility weight path.
+
+    Active callers should use :func:`analysis.weight_service.compute_peer_weights`,
+    which routes through :mod:`analysis.unified_weights` and applies the shared
+    validation/fallback rules. This function remains for legacy direct imports.
+    """
     peers_list = [p.upper() for p in peers] if peers else []
     if not peers_list:
         return pd.Series(dtype=float)
@@ -563,8 +568,9 @@ def build_peer_weights(
     power: float = DEFAULT_WEIGHT_POWER,
     k: Optional[int] = None,
 ) -> pd.Series:
-    """
-    Unified dispatcher for peer weights.
+    """Deprecated compatibility dispatcher.
+
+    New code should call :func:`analysis.weight_service.compute_peer_weights`.
     Feature matrices are built by unified_weights and consumed here.
     """
     method = (method or "corr").lower()

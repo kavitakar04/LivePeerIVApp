@@ -32,6 +32,7 @@ import sys
 from typing import Dict, Any, Optional
 
 import pandas as pd
+from volModel.models import GUI_MODELS
 
 # Attempt to import load_model_params from the analysis package.  If this
 # import fails (for example when running the file stand‑alone for testing),
@@ -173,7 +174,10 @@ class ModelParamsFrame(ttk.Frame):
 
         ttk.Label(ctrl, text="Model:").grid(row=0, column=2, sticky=tk.W)
         self.cmb_model = ttk.Combobox(
-            ctrl, values=["svi", "sabr", "tps"], width=8, state="readonly"
+            ctrl,
+            values=list(GUI_MODELS),
+            width=8,
+            state="readonly",
         )
         self.cmb_model.set("svi")
         self.cmb_model.grid(row=0, column=3, padx=4)

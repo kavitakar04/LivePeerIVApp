@@ -1,13 +1,13 @@
 """
-High-level Synthetic ETF construction utilities.
+High-level peer-composite construction utilities.
 
 Leverages existing primitives:
-- build_surface_grids / combine_surfaces (analysis.syntheticETFBuilder)
+- build_surface_grids / combine_surfaces (analysis.peer_composite_builder)
 - UnifiedWeightComputer for peer weighting (analysis.unified_weights)
 - sample_smile_curve / fit_smile_for (analysis.analysis_pipeline)
 
 Provides:
-- SyntheticETFBuilder: orchestrates weights, surfaces, synthetic surface, ATM RV.
+- PeerCompositeBuilder: orchestrates weights, surfaces, peer-composite surface, ATM RV.
 - Convenience functions for command-line or programmatic usage.
 
 Design Goals:
@@ -30,7 +30,7 @@ import os
 import json
 import time
 
-from analysis.syntheticETFBuilder import (
+from analysis.peer_composite_builder import (
     build_surface_grids,
     combine_surfaces,
     DEFAULT_TENORS,
@@ -50,13 +50,13 @@ from analysis.analysis_pipeline import (
 )
 from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, FeatureSet, WeightMethod
 from analysis.pillars import compute_atm_by_expiry
-from analysis.syntheticETFBuilder import build_synthetic_iv_by_rank
+from analysis.peer_composite_builder import build_synthetic_iv_by_rank
 
 WeightMode = str
 
 
 @dataclass
-class SyntheticETFConfig:
+class PeerCompositeConfig:
     target: str
     peers: Iterable[str]
     max_expiries: int = DEFAULT_MAX_EXPIRIES
@@ -79,7 +79,7 @@ class SyntheticETFConfig:
 
 
 @dataclass
-class SyntheticETFArtifacts:
+class PeerCompositeArtifacts:
     weights: pd.Series
     surfaces: Dict[str, Dict[str, pd.DataFrame]]
     synthetic_surfaces: Dict[str, pd.DataFrame]
@@ -87,10 +87,10 @@ class SyntheticETFArtifacts:
     meta: Dict[str, str] = field(default_factory=dict)
 
 
-class SyntheticETFBuilder:
+class PeerCompositeBuilder:
     def __init__(
         self,
-        config: SyntheticETFConfig,
+        config: PeerCompositeConfig,
         weight_computer: Optional[UnifiedWeightComputer] = None,
     ):
         self.cfg = config
@@ -216,7 +216,7 @@ class SyntheticETFBuilder:
     def build_all(
         self,
         custom_weights: Optional[Dict[str, float]] = None,
-    ) -> SyntheticETFArtifacts:
+    ) -> PeerCompositeArtifacts:
         start = time.time()
         w = self.compute_weights(custom_weights=custom_weights)
         surfaces = self.build_surfaces()
@@ -235,7 +235,7 @@ class SyntheticETFBuilder:
             "build_timestamp_utc": pd.Timestamp.utcnow().isoformat(),
             "elapsed_sec": f"{time.time()-start:.2f}",
         }
-        return SyntheticETFArtifacts(
+        return PeerCompositeArtifacts(
             weights=w,
             surfaces=surfaces,
             synthetic_surfaces=synth,
@@ -246,7 +246,7 @@ class SyntheticETFBuilder:
     # ----------------------
     # Export Helpers
     # ----------------------
-    def export(self, artifacts: SyntheticETFArtifacts, out_dir: str) -> None:
+    def export(self, artifacts: PeerCompositeArtifacts, out_dir: str) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
         # weights
@@ -308,26 +308,26 @@ class SyntheticETFBuilder:
 # ----------------------
 # Stand-alone convenience function
 # ----------------------
-def build_synthetic_etf(
+def build_peer_composite(
     target: str,
     peers: Iterable[str],
     weight_mode: WeightMode = "corr_iv_atm",
     custom_weights: Optional[Dict[str, float]] = None,
     **kwargs,
-) -> SyntheticETFArtifacts:
-    cfg = SyntheticETFConfig(
+) -> PeerCompositeArtifacts:
+    cfg = PeerCompositeConfig(
         target=target,
         peers=tuple(peers),
         weight_mode=weight_mode,
         **kwargs,
     )
-    builder = SyntheticETFBuilder(cfg)
+    builder = PeerCompositeBuilder(cfg)
     return builder.build_all(custom_weights=custom_weights)
 
 
 __all__ = [
-    "SyntheticETFConfig",
-    "SyntheticETFBuilder",
-    "SyntheticETFArtifacts",
-    "build_synthetic_etf",
+    "PeerCompositeConfig",
+    "PeerCompositeBuilder",
+    "PeerCompositeArtifacts",
+    "build_peer_composite",
 ]

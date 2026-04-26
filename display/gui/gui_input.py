@@ -59,6 +59,7 @@ from analysis.settings import (
     parse_int_list,
     parse_moneyness_bins,
 )
+from volModel.models import GUI_MODELS
 
 
 DEFAULT_PILLARS = list(DEFAULT_PILLAR_DAYS)
@@ -77,9 +78,32 @@ PERSISTED_SETTING_KEYS = (
     "clip_negative",
     "overlay_synth",
     "overlay_peers",
+    "show_term_fit",
     "pillars",
     "max_expiries",
 )
+WEIGHT_METHODS = ("corr", "pca", "oi", "cosine", "equal")
+WEIGHT_METHOD_LABELS = {
+    "corr": "Correlation",
+    "pca": "PCA",
+    "oi": "Open Interest",
+    "cosine": "Cosine Similarity",
+    "equal": "Equal Weight",
+}
+WEIGHT_METHOD_IDS_BY_LABEL = {label: key for key, label in WEIGHT_METHOD_LABELS.items()}
+WEIGHT_METHOD_DISPLAY = tuple(WEIGHT_METHOD_LABELS[key] for key in WEIGHT_METHODS)
+
+
+def weight_method_label(method: str) -> str:
+    return WEIGHT_METHOD_LABELS.get(str(method or "").lower(), str(method or ""))
+
+
+def weight_method_id(label_or_method: str) -> str:
+    value = str(label_or_method or "").strip()
+    if value in WEIGHT_METHOD_IDS_BY_LABEL:
+        return WEIGHT_METHOD_IDS_BY_LABEL[value]
+    lowered = value.lower()
+    return lowered if lowered in WEIGHT_METHODS else DEFAULT_WEIGHT_METHOD
 
 
 def _load_gui_preferences() -> dict[str, Any]:
@@ -112,10 +136,8 @@ PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
     "Relative Weight Matrix",
-    "Synthetic Surface (Smile)",
-    "ETF Weights",
+    "Peer Composite Surface",
     "RV Heatmap",
-    "RV Signals",
 )
 
 # Stable IDs decoupled from display labels. All routing logic must use these;
@@ -124,10 +146,8 @@ PLOT_ID: dict[str, str] = {
     "Smile (K/S vs IV)":        "smile",
     "Term (ATM vs T)":           "term",
     "Relative Weight Matrix":    "corr_matrix",
-    "Synthetic Surface (Smile)": "synthetic_surface",
-    "ETF Weights":               "etf_weights",
+    "Peer Composite Surface": "synthetic_surface",
     "RV Heatmap":                "rv_heatmap",
-    "RV Signals":                "rv_signals",
 }
 
 
@@ -142,10 +162,8 @@ def plot_id(label: str) -> str:
         return "term"
     if text.startswith("Relative Weight Matrix"):
         return "corr_matrix"
-    if text.startswith("Synthetic Surface"):
+    if text.startswith("Peer Composite Surface"):
         return "synthetic_surface"
-    if text.startswith("ETF Weights"):
-        return "etf_weights"
     return text
 
 
@@ -162,9 +180,20 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
         return "surface"
     if pid == "corr_matrix":
         return "term" if feature_mode in ("iv_atm", "ul") else "surface"
-    if pid == "etf_weights":
-        return "surface" if feature_mode.startswith("surface") else "term"
     return "term"
+
+
+def gui_model_values() -> list[str]:
+    """Return user-selectable smile model names."""
+    return list(GUI_MODELS)
+
+
+def model_selection_state(plot_type: str, feature_mode: str) -> str:
+    """Return combobox state for plots that support explicit smile models."""
+    pid = plot_id(plot_type)
+    if pid in ("smile", "synthetic_surface"):
+        return "readonly"
+    return "disabled"
 
 class InputPanel(ttk.Frame):
     """
@@ -186,8 +215,8 @@ class InputPanel(ttk.Frame):
         Confidence interval expressed in percentage (e.g. 68 for 68%).
     """
 
-    def __init__(self, master, *, overlay_synth: bool = True, overlay_peers: bool = True,
-                 ci_percent: float = 68.0):
+    def __init__(self, master, *, overlay_synth: bool = True, overlay_peers: bool = False,
+                 ci_percent: float = 68.0, settings_parent=None):
         super().__init__(master)
         self.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
 
@@ -266,7 +295,12 @@ class InputPanel(ttk.Frame):
         self.cmb_plot.bind("<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
         ttk.Label(row2, text="Model").grid(row=0, column=4, sticky="w")
-        self.cmb_model = ttk.Combobox(row2, values=["svi", "sabr", "tps"], width=8, state="readonly")
+        self.cmb_model = ttk.Combobox(
+            row2,
+            values=gui_model_values(),
+            width=8,
+            state="readonly",
+        )
         self.cmb_model.set(DEFAULT_MODEL)
         self.cmb_model.grid(row=0, column=5, padx=6)
         self.cmb_model.bind("<<ComboboxSelected>>", self._sync_settings)
@@ -294,10 +328,10 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row3, text="Weights").grid(row=0, column=0, sticky="w")
         self.cmb_weight_method = ttk.Combobox(
-            row3, values=["corr", "pca", "cosine", "equal", "oi"],
-            width=10, state="readonly",
+            row3, values=WEIGHT_METHOD_DISPLAY,
+            width=18, state="readonly",
         )
-        self.cmb_weight_method.set(DEFAULT_WEIGHT_METHOD)
+        self.cmb_weight_method.set(weight_method_label(DEFAULT_WEIGHT_METHOD))
         self.cmb_weight_method.grid(row=0, column=1, padx=6)
         self.cmb_weight_method.bind(
             "<<ComboboxSelected>>",
@@ -323,13 +357,19 @@ class InputPanel(ttk.Frame):
         self.var_overlay_synth.trace_add("write", lambda *args: self._sync_settings())
 
         self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
-        self.chk_overlay_peers = ttk.Checkbutton(row3, text="Overlay peers",
+        self.chk_overlay_peers = ttk.Checkbutton(row3, text="Show individual peers",
                                                   variable=self.var_overlay_peers)
         self.chk_overlay_peers.grid(row=0, column=5, padx=4, sticky="w")
         self.var_overlay_peers.trace_add("write", lambda *args: self._sync_settings())
 
+        self.var_show_term_fit = tk.BooleanVar(value=False)
+        self.chk_show_term_fit = ttk.Checkbutton(row3, text="Show term fit",
+                                                 variable=self.var_show_term_fit)
+        self.chk_show_term_fit.grid(row=0, column=6, padx=4, sticky="w")
+        self.var_show_term_fit.trace_add("write", lambda *args: self._sync_settings())
+
         self.btn_plot = ttk.Button(row3, text="Plot")
-        self.btn_plot.grid(row=0, column=6, padx=12)
+        self.btn_plot.grid(row=0, column=7, padx=12)
 
         # stub vars for API compatibility
         self.var_weight_power = tk.DoubleVar(value=DEFAULT_WEIGHT_POWER)
@@ -338,7 +378,9 @@ class InputPanel(ttk.Frame):
         # =======================
         # Row 4: Analysis settings
         # =======================
-        row4 = ttk.Frame(self); row4.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
+        settings_container = settings_parent if settings_parent is not None else self
+        row4 = ttk.LabelFrame(settings_container, text="Analysis Settings")
+        row4.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(row4, text="Max exp").grid(row=0, column=0, sticky="w")
         self.ent_maxexp = ttk.Entry(row4, width=5)
@@ -500,7 +542,7 @@ class InputPanel(ttk.Frame):
         return self.cmb_xunits.get() or DEFAULT_X_UNITS
 
     def get_weight_method(self) -> str:
-        return self.cmb_weight_method.get() or DEFAULT_WEIGHT_METHOD
+        return weight_method_id(self.cmb_weight_method.get())
 
     def get_feature_mode(self) -> str:
         return self.cmb_feature_mode.get() or DEFAULT_FEATURE_MODE
@@ -510,6 +552,9 @@ class InputPanel(ttk.Frame):
 
     def get_clip_negative(self) -> bool:
         return self.var_clip_negative.get()
+
+    def get_show_term_fit(self) -> bool:
+        return bool(self.var_show_term_fit.get())
 
     def get_pillars(self) -> list[int]:
         return parse_int_list(self.ent_pillars.get(), tuple(DEFAULT_PILLARS))
@@ -570,6 +615,7 @@ class InputPanel(ttk.Frame):
                 clip_negative=self.get_clip_negative(),
                 overlay_synth=self.get_overlay_synth(),
                 overlay_peers=self.get_overlay_peers(),
+                show_term_fit=self.get_show_term_fit(),
                 pillars=pillars,
                 max_expiries=self.get_max_exp(),
                 feature_scope=feature_scope,
@@ -579,8 +625,8 @@ class InputPanel(ttk.Frame):
             pass
 
     def _replot_if_weights(self):
-        """Re-render the plot immediately when weight/feature controls change and ETF Weights is active."""
-        if plot_id(self.get_plot_type()) == "etf_weights" and hasattr(self, "_plot_fn"):
+        """Re-render plots that directly depend on weight/feature controls."""
+        if plot_id(self.get_plot_type()) in {"smile", "term", "synthetic_surface", "corr_matrix", "rv_heatmap"} and hasattr(self, "_plot_fn"):
             self._plot_fn()
 
     def _refresh_visibility(self):
@@ -589,10 +635,9 @@ class InputPanel(ttk.Frame):
         pid = plot_id(self.get_plot_type())
 
         show_T = pid == "smile" or (pid == "corr_matrix" and feat in ("iv_atm", "ul"))
-        show_model = feat == "surface" and pid in ("smile", "synthetic_surface")
-
         self.ent_days.configure(state=("normal" if show_T else "disabled"))
-        self.cmb_model.configure(state=("readonly" if show_model else "disabled"))
+        self.cmb_model.configure(state=model_selection_state(pid, feat))
+        self.chk_show_term_fit.configure(state=("normal" if pid == "term" else "disabled"))
         self.cmb_feature_mode.configure(
             state=("disabled" if wm == "oi" else "readonly")
         )

@@ -6,6 +6,7 @@ from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
+import logging
 
 from analysis.correlation_utils import corr_weights
 from analysis import unified_weights
@@ -15,6 +16,7 @@ from analysis.settings import (
     DEFAULT_WEIGHT_POWER,
 )
 
+logger = logging.getLogger(__name__)
 
 def _normalize_weights(weights: Optional[pd.Series], peers: list[str]) -> Optional[pd.Series]:
     if weights is None or weights.empty:
@@ -26,7 +28,14 @@ def _normalize_weights(weights: Optional[pd.Series], peers: list[str]) -> Option
     total = float(w.sum())
     if total <= 0 or not np.isfinite(total):
         return None
-    return (w / total).reindex(peers).fillna(0.0).astype(float)
+    out = (w / total).reindex(peers).fillna(0.0).astype(float)
+    arr = out.to_numpy(float)
+    if not np.isfinite(arr).all() or (arr < -1e-12).any():
+        return None
+    if len(arr) > 1 and float(np.max(np.abs(arr))) > 0.98:
+        return None
+    out.attrs.update(getattr(weights, "attrs", {}))
+    return out
 
 
 def resolve_peer_weights(
@@ -66,6 +75,8 @@ def resolve_peer_weights(
         try:
             normalized = _normalize_weights(fn(), peers)
             if normalized is not None:
+                if normalized.attrs.get("weight_warning"):
+                    logger.warning(normalized.attrs["weight_warning"])
                 return normalized
         except TypeError:
             continue
@@ -99,4 +110,7 @@ def resolve_peer_weights(
         pass
 
     eq = 1.0 / max(len(peers), 1)
-    return pd.Series(eq, index=peers, dtype=float)
+    out = pd.Series(eq, index=peers, dtype=float)
+    out.attrs["weight_warning"] = f"{weight_mode} weights unavailable or invalid; using equal weights"
+    logger.warning(out.attrs["weight_warning"])
+    return out

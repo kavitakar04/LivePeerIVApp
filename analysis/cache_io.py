@@ -1,3 +1,17 @@
+"""Canonical persistent calculation cache.
+
+Cache ownership:
+- Backend: SQLite database at ``data/calculations.db`` by default.
+- Key: SHA-256 of ``kind``, per-kind artifact version, and stable JSON payload.
+- Value: pickled artifact compressed with zlib.
+- Lifecycle: entries expire after ``TTL_SEC`` seconds and expired rows are
+  pruned opportunistically on writes.
+
+Legacy raw-marker helpers ``save_calc_cache`` and ``load_calc_cache`` remain
+for tests and old callers, but new calculation artifacts should use
+``compute_or_load``.
+"""
+
 import json
 import pickle
 import sqlite3
@@ -14,6 +28,7 @@ from analysis.settings import DEFAULT_CALC_CACHE_TTL_SEC
 
 TTL_SEC = DEFAULT_CALC_CACHE_TTL_SEC
 ARTIFACT_VERSION: Dict[str, str] = {}
+DEFAULT_CALC_CACHE_DB_PATH = "data/calculations.db"
 
 
 def _latest_raw_marker(conn: sqlite3.Connection) -> str | None:
@@ -78,7 +93,12 @@ def _hash_inputs(kind: str, payload: dict) -> str:
     hasher.update(payload_json.encode())
     return hasher.hexdigest()
 
-def compute_or_load(kind: str, payload: dict, builder_fn: Callable[[], Any], db_path: str) -> Any:
+def compute_or_load(
+    kind: str,
+    payload: dict,
+    builder_fn: Callable[[], Any],
+    db_path: str = DEFAULT_CALC_CACHE_DB_PATH,
+) -> Any:
     """Compute an artifact or load it from cache.
 
     Parameters
@@ -90,11 +110,13 @@ def compute_or_load(kind: str, payload: dict, builder_fn: Callable[[], Any], db_
     builder_fn : Callable[[], Any]
         Function that builds the artifact when cache miss occurs.
     db_path : str
-        Path to the SQLite database file used for caching.
+        Path to the SQLite database file used for caching. Defaults to the
+        canonical calculations DB.
     """
     key = _hash_inputs(kind, payload)
     now = int(time.time())
     db_file = Path(db_path)
+    db_file.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_file)
     try:
         conn.execute("PRAGMA journal_mode=WAL")

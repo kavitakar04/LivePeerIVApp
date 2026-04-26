@@ -12,17 +12,17 @@ def test_ul_mode_conversion():
     print(f"Feature set: {config.feature_set}")
     print(f"Expected: CORRELATION method with UNDERLYING_PX features")
     
-    # Test through the actual synthetic ETF interface
-    print("\nTesting through synthetic ETF interface...")
-    from analysis.analysis_synthetic_etf import SyntheticETFBuilder, SyntheticETFConfig
+    # Test through the actual peer-composite interface
+    print("\nTesting through peer-composite interface...")
+    from analysis.peer_composite_service import PeerCompositeBuilder, PeerCompositeConfig
     
-    cfg = SyntheticETFConfig(
+    cfg = PeerCompositeConfig(
         target="SPY",
         peers=("QQQ", "IWM"),
         weight_mode="corr_ul"
     )
     
-    builder = SyntheticETFBuilder(cfg)
+    builder = PeerCompositeBuilder(cfg)
     try:
         weights = builder.compute_weights()
         print(f"✓ Weights computed successfully: {weights}")

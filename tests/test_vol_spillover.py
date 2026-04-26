@@ -4,6 +4,7 @@ import numpy as np
 from analysis.spillover.vol_spillover import (
     compute_responses,
     compute_weights_and_regression,
+    summarise,
 )
 
 
@@ -24,6 +25,45 @@ def test_compute_responses_horizon_offsets():
     responses = compute_responses(df, events, peers, horizons=[1, 2])
     result = responses.sort_values('h')['peer_pct'].tolist()
     assert np.allclose(result, [0.2, 0.3])
+
+
+def test_summarise_adds_statistical_context():
+    responses = pd.DataFrame({
+        "ticker": ["AAA"] * 6,
+        "peer": ["BBB"] * 6,
+        "t0": pd.date_range("2024-01-01", periods=6),
+        "h": [1] * 6,
+        "trigger_pct": [0.10] * 6,
+        "peer_pct": [0.04, 0.05, 0.05, 0.06, 0.05, 0.04],
+        "sign": [1] * 6,
+    })
+    baseline = pd.DataFrame({
+        "ticker": ["AAA"] * 20,
+        "peer": ["BBB"] * 20,
+        "h": [1] * 20,
+        "peer_pct": np.zeros(20),
+    })
+
+    summary = summarise(
+        responses,
+        threshold=0.02,
+        baseline=baseline,
+        n_boot=50,
+        n_perm=99,
+        random_state=1,
+    )
+    row = summary.iloc[0]
+
+    assert row["hit_rate"] == 1.0
+    assert row["sign_concord"] == 1.0
+    assert row["median_resp"] > 0.0
+    assert row["baseline_median_resp"] == 0.0
+    assert row["median_abnormal_resp"] == row["median_resp"]
+    assert np.isfinite(row["median_resp_ci_low"])
+    assert np.isfinite(row["median_resp_ci_high"])
+    assert np.isfinite(row["p_value"])
+    assert np.isfinite(row["q_value"])
+    assert row["strength"] == "Strong"
 
 
 def test_weighting_and_regression_90d(monkeypatch):

@@ -105,38 +105,6 @@ EXPLANATIONS: dict[tuple[str, str], str] = {
         "Spread shows where the target deviates from this consensus shape."
     ),
 
-    # ── ETF weights bar chart ─────────────────────────────────────────────────
-    ("iv_atm", "etf_weights"): (
-        "Portfolio weights for constructing a synthetic target from peer implied vols.  "
-        "A dominant single peer means one ticker drives the replication.  "
-        "Even weights suggest the target's vol dynamics are explained by the broad group, not one name.  "
-        "Negative weights (when clip_negative is off) mean that peer's vol moves inversely — it hedges the composite."
-    ),
-    ("iv_atm_ranks", "etf_weights"): (
-        "Weights derived from rank-order ATM vol correlation.  "
-        "More robust to cross-section differences in vol level; focuses on term-structure shape similarity.  "
-        "Prefer when peers span different vol regimes (e.g. mixing high-beta and low-beta names)."
-    ),
-    ("surface_grid", "etf_weights"): (
-        "Surface-grid basis weights: each peer is sized by how well its full IV surface co-moves with the target.  "
-        "Peers that share both level and skew dynamics receive the highest weights.  "
-        "Use when you need replication to track skew behavior, not just ATM vol."
-    ),
-    ("oi", "etf_weights"): (
-        "Open-interest weights — each peer is weighted by its relative open interest (a liquidity proxy).  "
-        "Model-free: no correlation computation; allocates to the most liquid names.  "
-        "Useful as a benchmark: divergence from correlation-based weights shows where liquidity and vol-similarity misalign."
-    ),
-    ("ul", "etf_weights"): (
-        "Weights derived from underlying return correlation, not IV correlation.  "
-        "Equity co-movement is a necessary but not sufficient condition for IV co-movement.  "
-        "Large divergence from IV-based weights is a signal: the stock moves with peers but its vol does not."
-    ),
-    ("volume", "etf_weights"): (
-        "Volume-weighted peer weights: peers with higher option volume carry more influence.  "
-        "Reflects market activity rather than pure vol similarity.  "
-        "Combine with correlation weights to assess whether active-trading names are also vol proxies."
-    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -254,7 +222,7 @@ def get_explanation(
     parts: list[str] = [base] if base else []
 
     # Append weight method explanation for plots where method matters
-    if include_weight_method and pid in ("corr_matrix", "etf_weights", "synthetic_surface"):
+    if include_weight_method and pid in ("corr_matrix", "synthetic_surface"):
         wm_text = WEIGHT_MODE_EXPLANATIONS.get(str(weight_method).lower(), "")
         if wm_text:
             # One sentence: first sentence of the method explanation

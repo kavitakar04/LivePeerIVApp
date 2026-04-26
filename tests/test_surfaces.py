@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from analysis.analysis_pipeline import PipelineConfig, build_surfaces
-from analysis.syntheticETFBuilder import build_surface_grids
+from analysis.peer_composite_builder import build_surface_grids
 from data.db_utils import ensure_initialized
 
 
@@ -179,7 +179,7 @@ def test_db():
 def test_use_atm_only_filters_rows(test_db):
     """Test that use_atm_only=True filters to only ATM options."""
     # Patch the get_conn function to use our test database
-    with patch('analysis.syntheticETFBuilder.get_conn', return_value=test_db):
+    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
         # Build surfaces with all options
         cfg_all = PipelineConfig(use_atm_only=False)
         surf_all = build_surface_grids(tickers=["SPY"], **{
@@ -218,7 +218,7 @@ def test_use_atm_only_filters_rows(test_db):
 
 def test_tenor_bins_configuration(test_db):
     """Test that different tenor bin configurations affect results."""
-    with patch('analysis.syntheticETFBuilder.get_conn', return_value=test_db):
+    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
         # Default tenors
         cfg_default = PipelineConfig()
         surf_default = build_surface_grids(tickers=["SPY"], **{
@@ -256,7 +256,7 @@ def test_tenor_bins_configuration(test_db):
 
 def test_moneyness_bins_configuration(test_db):
     """Test that different moneyness bin configurations affect results."""
-    with patch('analysis.syntheticETFBuilder.get_conn', return_value=test_db):
+    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
         # Default moneyness bins
         cfg_default = PipelineConfig()
         surf_default = build_surface_grids(tickers=["SPY"], **{
@@ -294,7 +294,7 @@ def test_moneyness_bins_configuration(test_db):
 
 def test_max_expiries_limits_data(test_db):
     """Test that max_expiries parameter limits the number of expiration dates."""
-    with patch('analysis.syntheticETFBuilder.get_conn', return_value=test_db):
+    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
         # No limit on expiries
         cfg_unlimited = PipelineConfig(max_expiries=None)
         surf_unlimited = build_surface_grids(tickers=["SPY"], **{
@@ -332,7 +332,7 @@ def test_max_expiries_limits_data(test_db):
 def test_build_surfaces_with_config(test_db):
     """Test the higher-level build_surfaces function with PipelineConfig."""
     with patch('analysis.analysis_pipeline._get_ro_conn', return_value=test_db):
-        with patch('analysis.syntheticETFBuilder.get_conn', return_value=test_db):
+        with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
             # Test with baseline config
             cfg_baseline = PipelineConfig(use_atm_only=False)
             surfaces_baseline = build_surfaces(tickers=["SPY"], cfg=cfg_baseline)
@@ -366,7 +366,7 @@ def test_build_surfaces_with_config(test_db):
 
 def test_configuration_isolation(test_db):
     """Test that different configurations produce isolated, predictable results."""
-    with patch('analysis.syntheticETFBuilder.get_conn', return_value=test_db):
+    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
         # Configuration 1: Very restrictive
         cfg_restrictive = PipelineConfig(
             tenors=(30, 90),

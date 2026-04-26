@@ -1,5 +1,5 @@
 """
-Test for synthetic ETF smile plot functionality to prevent regression of flat line issue.
+Test for peer-composite smile plot functionality to prevent regression of flat line issue.
 """
 import sqlite3
 import pandas as pd
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from data.db_utils import ensure_initialized
 from analysis.beta_builder import iv_surface_betas, peer_weights_from_correlations
-from analysis.syntheticETFBuilder import build_surface_grids, combine_surfaces
+from analysis.peer_composite_builder import build_surface_grids, combine_surfaces
 
 
 def create_smile_test_db():
@@ -104,13 +104,13 @@ def test_iv_surface_betas_no_crash(smile_test_db):
     assert valid_betas > 0, "Should have at least some valid surface betas"
 
 
-def test_synthetic_etf_smile_variation(smile_test_db):
-    """Test that synthetic ETF surfaces show smile variation, not flat lines."""
+def test_peer_composite_smile_variation(smile_test_db):
+    """Test that peer-composite surfaces show smile variation, not flat lines."""
     def mock_get_conn():
         return smile_test_db
     
     with patch('data.db_utils.get_conn', mock_get_conn), \
-         patch('analysis.syntheticETFBuilder.get_conn', mock_get_conn):
+         patch('analysis.peer_composite_builder.get_conn', mock_get_conn):
         
         # Test surface_grid mode (the one that was broken)
         weights = peer_weights_from_correlations(
@@ -164,7 +164,7 @@ def test_multiple_weight_modes_work(smile_test_db):
     modes = ['surface_grid', 'surface', 'iv_atm']
     
     with patch('data.db_utils.get_conn', mock_get_conn), \
-         patch('analysis.syntheticETFBuilder.get_conn', mock_get_conn):
+         patch('analysis.peer_composite_builder.get_conn', mock_get_conn):
         
         for mode in modes:
             # Calculate weights

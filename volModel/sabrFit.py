@@ -5,6 +5,8 @@ import math
 import numpy as np
 from functools import lru_cache
 
+from .quality import validate_model_fit
+
 # Optional SciPy; we fall back to a tiny Nelder–Mead if missing
 try:
     from scipy.optimize import minimize
@@ -25,6 +27,15 @@ except Exception:
 
 def _safe(val: float, lo: float = 1e-16) -> float:
     return float(val) if val > lo else float(lo)
+
+
+def _signed_safe_den(val: float, lo: float = 1e-12) -> float:
+    val = float(val)
+    if abs(val) >= lo:
+        return val
+    return lo if val >= 0.0 else -lo
+
+
 @lru_cache(maxsize=2048)
 def _hagan_logn_terms_cached(
     F: float,
@@ -60,11 +71,14 @@ def _hagan_logn_terms_cached(
         sqrt_arg = max(1.0 - 2.0 * rho * z + z * z, 1e-16)
         num = math.sqrt(sqrt_arg) + z - rho
         den = 1.0 - rho
-        xz = math.log(max(num / _safe(den), 1e-16))
+        ratio = num / _safe(den)
+        if ratio <= 0.0 or not math.isfinite(ratio):
+            return (term1, float("nan"), 1.0, float("nan"), float(L))
+        xz = math.log(ratio)
         if abs(z) < 1e-8:
             zx = 1.0 - 0.5 * rho * z
         else:
-            zx = z / _safe(xz)
+            zx = z / _signed_safe_den(xz)
 
     term2 = zx
     A = (one_minus_b**2 / 24.0) * (alpha * alpha) / (_safe((F * K) ** (one_minus_b)))
@@ -73,6 +87,8 @@ def _hagan_logn_terms_cached(
     term3 = 1.0 + T * (A + B + C)
 
     iv = term1 * term2 * term3
+    if not math.isfinite(iv) or iv <= 0.0:
+        iv = float("nan")
     return (
         float(term1),
         float(term2),
@@ -267,6 +283,8 @@ def fit_sabr_slice(
     def obj(p):
         a, r, n_ = _clip(np.asarray(p, dtype=float))
         iv_fit = np.array([hagan_logn_vol(F, float(k), T, a, beta, r, n_) for k in K], dtype=float)
+        if not np.isfinite(iv_fit).all() or np.any(iv_fit <= 0):
+            return 1e12
         err = iv_fit - iv_obs
         if W is not None:
             se = np.nansum(W * (err * err))
@@ -285,7 +303,7 @@ def fit_sabr_slice(
         p = _clip(res["x"]); rmse = math.sqrt(max(res["fun"], 0.0))
 
     alpha, rho, nu = [float(v) for v in p]
-    return {
+    out = {
         "alpha": alpha,
         "beta": float(beta),
         "rho": rho,
@@ -293,6 +311,16 @@ def fit_sabr_slice(
         "rmse": rmse,
         "n": int(n),
     }
+    quality = validate_model_fit(
+        "sabr",
+        out,
+        lambda p_: sabr_smile_iv(F, K, T, p_),
+        iv_obs=iv_obs,
+    )
+    out["quality_ok"] = bool(quality.ok)
+    if not quality.ok:
+        out["quality_reason"] = quality.reason
+    return out
 
 
 # ============================================================

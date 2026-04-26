@@ -1,5 +1,6 @@
 import sqlite3
-from analysis.cache_io import save_calc_cache, load_calc_cache
+from analysis import cache_io
+from analysis.cache_io import save_calc_cache, load_calc_cache, compute_or_load
 
 
 def _setup_db():
@@ -31,3 +32,33 @@ def test_cache_invalidated_on_raw_update():
     conn.execute("INSERT INTO options_quotes(asof_date) VALUES('2000-01-01')")
     conn.commit()
     assert load_calc_cache(conn, 'k') is None
+
+
+def test_compute_or_load_reuses_unexpired_artifact(tmp_path):
+    calls = {"n": 0}
+
+    def builder():
+        calls["n"] += 1
+        return {"v": calls["n"]}
+
+    db_path = tmp_path / "calculations.db"
+    assert compute_or_load("kind", {"x": 1}, builder, db_path=str(db_path)) == {"v": 1}
+    assert compute_or_load("kind", {"x": 1}, builder, db_path=str(db_path)) == {"v": 1}
+    assert calls["n"] == 1
+
+
+def test_compute_or_load_rebuilds_expired_artifact(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def builder():
+        calls["n"] += 1
+        return {"v": calls["n"]}
+
+    db_path = tmp_path / "calculations.db"
+    monkeypatch.setattr(cache_io, "TTL_SEC", 1)
+    monkeypatch.setattr(cache_io.time, "time", lambda: 1000)
+    assert compute_or_load("kind", {"x": 1}, builder, db_path=str(db_path)) == {"v": 1}
+
+    monkeypatch.setattr(cache_io.time, "time", lambda: 1002)
+    assert compute_or_load("kind", {"x": 1}, builder, db_path=str(db_path)) == {"v": 2}
+    assert calls["n"] == 2
