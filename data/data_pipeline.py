@@ -29,14 +29,40 @@ from .quote_quality import (
     filter_quotes,
     normalize_market_fields,
 )
+from analysis.settings import DEFAULT_UNDERLYING_LOOKBACK_DAYS
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 
+def _history_period_for_lookback(days: int) -> str:
+    """Map requested study days to a yfinance period that covers them."""
+    try:
+        days = int(days)
+    except Exception:
+        days = DEFAULT_UNDERLYING_LOOKBACK_DAYS
+    if days <= 5:
+        return "5d"
+    if days <= 31:
+        return "1mo"
+    if days <= 93:
+        return "3mo"
+    if days <= 186:
+        return "6mo"
+    if days <= 366:
+        return "1y"
+    if days <= 731:
+        return "2y"
+    if days <= 1826:
+        return "5y"
+    if days <= 3652:
+        return "10y"
+    return "max"
+
+
 def check_and_update_underlying_prices(
     tickers: Set[str], 
-    lookback_days: int = 365,
+    lookback_days: int = DEFAULT_UNDERLYING_LOOKBACK_DAYS,
     force_update: bool = False
 ) -> int:
     """
@@ -56,8 +82,14 @@ def check_and_update_underlying_prices(
     logger.info(f"Checking underlying price coverage for {len(tickers)} tickers...")
     
     conn = get_conn()
+    try:
+        lookback_days = max(1, int(lookback_days))
+    except Exception:
+        lookback_days = DEFAULT_UNDERLYING_LOOKBACK_DAYS
+
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
     today = datetime.now().strftime('%Y-%m-%d')
+    fetch_period = _history_period_for_lookback(lookback_days)
     
     try:
         # Check what data we already have
@@ -92,8 +124,8 @@ def check_and_update_underlying_prices(
                 # Check if data is stale (more than 2 days old)
                 days_stale = (datetime.now() - pd.to_datetime(latest)).days
                 
-                # Check if we have insufficient history (less than 80% of expected days)
-                expected_days = min(lookback_days, 250)  # max ~1 trading year
+                # Check if we have insufficient history (less than 80% of requested days)
+                expected_days = lookback_days
                 coverage_ratio = row_count / expected_days
                 
                 if days_stale > 2:
@@ -113,7 +145,7 @@ def check_and_update_underlying_prices(
         logger.info(f"Updating underlying prices for {len(tickers_to_update)} tickers: {sorted(tickers_to_update)}")
         
         # Fetch missing/stale data
-        total_updated = update_underlying_prices(tickers_to_update, period="1y")
+        total_updated = update_underlying_prices(tickers_to_update, period=fetch_period)
         
         logger.info(f"Successfully updated {total_updated} underlying price records")
         return total_updated
@@ -123,7 +155,11 @@ def check_and_update_underlying_prices(
         return 0
 
 
-def ensure_underlying_price_data(tickers, force_update: bool = False) -> bool:
+def ensure_underlying_price_data(
+    tickers,
+    force_update: bool = False,
+    lookback_days: int = DEFAULT_UNDERLYING_LOOKBACK_DAYS,
+) -> bool:
     """
     Convenience function to ensure underlying price data is available.
     
@@ -140,6 +176,7 @@ def ensure_underlying_price_data(tickers, force_update: bool = False) -> bool:
     try:
         updated_count = check_and_update_underlying_prices(
             set(str(t).upper() for t in tickers), 
+            lookback_days=lookback_days,
             force_update=force_update
         )
         logger.info(f"Underlying data check complete. Updated {updated_count} records.")
@@ -154,6 +191,7 @@ def enrich_quotes(
     r: float = STANDARD_RISK_FREE_RATE,
     q: float = STANDARD_DIVIDEND_YIELD,
     auto_update_underlying: bool = True,
+    underlying_lookback_days: int = DEFAULT_UNDERLYING_LOOKBACK_DAYS,
 ) -> pd.DataFrame:
     if raw_df is None or raw_df.empty:
         return raw_df
@@ -165,7 +203,10 @@ def enrich_quotes(
         tickers_in_batch = set(df['ticker'].unique())
         logger.info(f"Auto-updating underlying prices for {len(tickers_in_batch)} tickers from options data")
         try:
-            updated_count = check_and_update_underlying_prices(tickers_in_batch)
+            updated_count = check_and_update_underlying_prices(
+                tickers_in_batch,
+                lookback_days=underlying_lookback_days,
+            )
             if updated_count > 0:
                 logger.info(f"Updated {updated_count} underlying price records")
         except Exception as e:

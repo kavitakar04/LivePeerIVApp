@@ -4,6 +4,7 @@ from pathlib import Path
 import threading
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
 import pandas as pd
 import sys
 
@@ -21,6 +22,191 @@ except ImportError:
     _HAVE_NETWORKX = False
 
 
+SPILLOVER_EXPLANATION = (
+    "Volatility spillover / propagation across peers for RV context. "
+    "A trigger is a large daily move in the selected series (IV or HV). "
+    "Peer response is the peer's percentage change from the prior trading day "
+    "to event date + horizon. Response frequency is the share of trigger events "
+    "where the peer response also exceeds the threshold; same-direction "
+    "probability is the share moving in the trigger direction."
+)
+
+SPILLOVER_INTERPRETATION_HINT = (
+    "Interpretation hint: strongest relationships combine high response "
+    "frequency, high same-direction probability, a large baseline-adjusted "
+    "response, and low p/q values."
+)
+
+SPILLOVER_SUMMARY_NOTE = (
+    "Response columns are percent changes in the selected series. Median peer "
+    "response is the median event response for that trigger-peer-horizon. "
+    "Abnormal vs baseline is median peer response minus the same pair's baseline "
+    "median from pseudo-event dates. The CI is for the median peer response."
+)
+
+SUMMARY_HEADINGS = {
+    "ticker": "Trigger",
+    "peer": "Peer",
+    "h": "H",
+    "hit": "Response frequency",
+    "sign": "Same-direction probability",
+    "resp": "Median peer response (%)",
+    "abn": "Abnormal vs baseline (%)",
+    "ci": "Median response 95% CI",
+    "p": "Perm p",
+    "q": "FDR q",
+    "strength": "Strength",
+    "n": "N",
+}
+
+SUMMARY_WIDTHS = {
+    "ticker": 70,
+    "peer": 70,
+    "h": 40,
+    "hit": 150,
+    "sign": 180,
+    "resp": 170,
+    "abn": 170,
+    "ci": 150,
+    "p": 70,
+    "q": 70,
+    "strength": 100,
+    "n": 50,
+}
+
+RESPONSE_PLOT_LABEL = "Avg pair median response"
+RESPONSE_PLOT_TITLE = "Average of pair-level median responses by horizon"
+RESPONSE_Y_LABEL = "Peer response (% change)"
+EVENT_RESPONSE_Y_LABEL = "Response (% change)"
+EVENT_RESPONSE_TITLE_SUFFIX = "trigger and peer responses"
+ROLLING_SIGNAL_WINDOW_EVENTS = 30
+ROLLING_SIGNAL_TITLE_SUFFIX = "rolling spillover signal"
+ROLLING_SIGNAL_ABNORMAL_LABEL = "Rolling abnormal response"
+ROLLING_SIGNAL_DIRECTION_LABEL = "Rolling same-direction probability"
+
+
+def compute_trigger_event_response(
+    df: pd.DataFrame,
+    ticker: str,
+    date,
+    horizons,
+) -> pd.DataFrame:
+    """Return the trigger ticker's own event-window response by horizon."""
+    cols = ["h", "response"]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+    required = {"date", "ticker", "atm_iv"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame(columns=cols)
+
+    ticker = str(ticker).upper()
+    date = pd.Timestamp(date)
+    source = df.copy()
+    source["date"] = pd.to_datetime(source["date"])
+    source["ticker"] = source["ticker"].astype(str).str.upper()
+    panel = source.set_index(["date", "ticker"]).sort_index()
+    dates = panel.index.get_level_values(0).unique()
+    idx0 = dates.searchsorted(date)
+    if idx0 == 0 or idx0 >= len(dates) or pd.Timestamp(dates[idx0]) != date:
+        return pd.DataFrame(columns=cols)
+
+    t_minus1 = dates[idx0 - 1]
+    if (t_minus1, ticker) not in panel.index:
+        return pd.DataFrame(columns=cols)
+    base = panel.loc[(t_minus1, ticker), "atm_iv"]
+    if not np.isfinite(base) or float(base) <= 0.0:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for h in horizons:
+        idx_h = idx0 + int(h)
+        if idx_h >= len(dates):
+            continue
+        d_h = dates[idx_h]
+        if (d_h, ticker) not in panel.index:
+            continue
+        resp = panel.loc[(d_h, ticker), "atm_iv"]
+        if not np.isfinite(resp):
+            continue
+        rows.append({"h": int(h), "response": float((resp - base) / base)})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def compute_rolling_spillover_signal(
+    responses: pd.DataFrame,
+    summary: pd.DataFrame,
+    trigger: str,
+    peer: str,
+    horizon: int,
+    *,
+    window: int = ROLLING_SIGNAL_WINDOW_EVENTS,
+) -> pd.DataFrame:
+    """Compute event-based rolling spillover metrics for one relationship."""
+    cols = [
+        "date",
+        "rolling_median_peer_response",
+        "rolling_abnormal_response",
+        "rolling_same_direction_probability",
+        "event_count",
+    ]
+    if responses is None or responses.empty or summary is None or summary.empty:
+        return pd.DataFrame(columns=cols)
+    required = {"ticker", "peer", "h", "t0", "peer_pct", "sign"}
+    if not required.issubset(responses.columns):
+        return pd.DataFrame(columns=cols)
+
+    trigger = str(trigger).upper()
+    peer = str(peer).upper()
+    horizon = int(horizon)
+    rel = responses.loc[
+        (responses["ticker"].astype(str).str.upper() == trigger)
+        & (responses["peer"].astype(str).str.upper() == peer)
+        & (responses["h"].astype(int) == horizon)
+    ].copy()
+    if rel.empty:
+        return pd.DataFrame(columns=cols)
+
+    summary_match = summary.loc[
+        (summary["ticker"].astype(str).str.upper() == trigger)
+        & (summary["peer"].astype(str).str.upper() == peer)
+        & (summary["h"].astype(int) == horizon)
+    ]
+    if summary_match.empty or "baseline_median_resp" not in summary_match.columns:
+        return pd.DataFrame(columns=cols)
+    baseline = summary_match.iloc[0]["baseline_median_resp"]
+    if not np.isfinite(baseline):
+        return pd.DataFrame(columns=cols)
+
+    window = max(1, int(window))
+    rel["t0"] = pd.to_datetime(rel["t0"])
+    rel["peer_pct"] = pd.to_numeric(rel["peer_pct"], errors="coerce")
+    rel["sign"] = pd.to_numeric(rel["sign"], errors="coerce")
+    rel = rel.replace([np.inf, -np.inf], np.nan).dropna(subset=["t0", "peer_pct", "sign"])
+    if rel.empty:
+        return pd.DataFrame(columns=cols)
+    rel = rel.sort_values("t0")
+    same_dir = (np.sign(rel["peer_pct"]) == rel["sign"]).astype(float)
+    roll = rel["peer_pct"].rolling(window=window, min_periods=1)
+    rolling_median = roll.median()
+    out = pd.DataFrame({
+        "date": rel["t0"].to_numpy(),
+        "rolling_median_peer_response": rolling_median.to_numpy(float),
+        "rolling_abnormal_response": (rolling_median - float(baseline)).to_numpy(float),
+        "rolling_same_direction_probability": same_dir.rolling(
+            window=window, min_periods=1
+        ).mean().to_numpy(float),
+        "event_count": rel["peer_pct"].rolling(window=window, min_periods=1).count().to_numpy(int),
+    })
+    return out[cols]
+
+
+def prepare_spillover_summary_display(summary: pd.DataFrame) -> pd.DataFrame:
+    """Sort summary rows for display without truncating relationships."""
+    if summary is None or summary.empty:
+        return pd.DataFrame() if summary is None else summary.copy()
+    return summary.copy().sort_values("hit_rate", ascending=False)
+
+
 class SpilloverFrame(ttk.Frame):
     """Spillover analysis panel, integrated with the IV browser's InputPanel."""
 
@@ -31,13 +217,7 @@ class SpilloverFrame(ttk.Frame):
 
         desc = ttk.Label(
             self,
-            text=(
-                "Volatility spillover / propagation across peers for RV context. "
-                "A trigger is a large daily IV/HV move in one ticker. "
-                "Frequency of response is the share of trigger events where a peer also moves beyond the threshold; "
-                "same-direction probability is the share moving in the trigger direction; "
-                "median IV change is the typical peer response over the horizon."
-            ),
+            text=SPILLOVER_EXPLANATION,
             wraplength=980,
             justify=tk.LEFT,
         )
@@ -45,10 +225,7 @@ class SpilloverFrame(ttk.Frame):
 
         hint = ttk.Label(
             self,
-            text=(
-                "Interpretation hint: strongest relationships combine high response frequency, "
-                "high same-direction probability, a large abnormal response, and low p/q values."
-            ),
+            text=SPILLOVER_INTERPRETATION_HINT,
             foreground="gray",
             wraplength=980,
             justify=tk.LEFT,
@@ -114,7 +291,7 @@ class SpilloverFrame(ttk.Frame):
         pane.add(plot_frame, weight=1)
 
         # Event table
-        ev_lf = ttk.LabelFrame(tables_frame, text="Recent IV Events (top 20)")
+        ev_lf = ttk.LabelFrame(tables_frame, text="Events in Lookback Window")
         ev_lf.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
         self.tree = ttk.Treeview(
             ev_lf, columns=("date", "ticker", "chg"), show="headings", height=5
@@ -134,27 +311,27 @@ class SpilloverFrame(ttk.Frame):
 
         # Summary table
         sum_cols = ("ticker", "peer", "h", "hit", "sign", "resp", "abn", "ci", "p", "q", "strength", "n")
-        sum_lf = ttk.LabelFrame(tables_frame, text="Spillover Summary (top 50 by hit rate)")
+        sum_lf = ttk.LabelFrame(tables_frame, text="Spillover Summary")
         sum_lf.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
+        sum_note = ttk.Label(
+            sum_lf,
+            text=SPILLOVER_SUMMARY_NOTE,
+            foreground="gray",
+            wraplength=980,
+            justify=tk.LEFT,
+        )
+        sum_note.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(2, 2))
         self.tree_sum = ttk.Treeview(sum_lf, columns=sum_cols, show="headings", height=6)
-        headings = {
-            "ticker": "Trigger", "peer": "Peer", "h": "H",
-            "hit": "Frequency of response", "sign": "Same-direction probability",
-            "resp": "Median IV change (%)", "abn": "Abnormal IV change (%)",
-            "ci": "95% CI", "p": "Perm p", "q": "FDR q",
-            "strength": "Strength", "n": "N",
-        }
-        widths = {"ticker": 70, "peer": 70, "h": 40, "hit": 150,
-                  "sign": 180, "resp": 150, "abn": 150, "ci": 140,
-                  "p": 70, "q": 70, "strength": 100, "n": 50}
         for col in sum_cols:
-            self.tree_sum.heading(col, text=headings[col])
-            self.tree_sum.column(col, width=widths[col])
+            self.tree_sum.heading(col, text=SUMMARY_HEADINGS[col])
+            self.tree_sum.column(col, width=SUMMARY_WIDTHS[col])
         self.tree_sum.tag_configure("strong", background="#fff2cc")
         sum_sb = ttk.Scrollbar(sum_lf, orient=tk.VERTICAL, command=self.tree_sum.yview)
         self.tree_sum.configure(yscrollcommand=sum_sb.set)
         self.tree_sum.pack(side=tk.LEFT, fill=tk.X, expand=True)
         sum_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_sum.bind("<<TreeviewSelect>>", self._on_summary_select)
+        self._summary_rows: dict[str, pd.Series] = {}
 
         # Graph centrality table (only shown when networkx is available)
         if _HAVE_NETWORKX:
@@ -191,6 +368,7 @@ class SpilloverFrame(ttk.Frame):
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         self.results = None
+        self._spillover_source_df = pd.DataFrame()
 
         # Auto-populate tickers if browser is attached
         if input_panel is not None:
@@ -268,6 +446,7 @@ class SpilloverFrame(ttk.Frame):
 
                 def update():
                     self.results = results
+                    self._spillover_source_df = df.copy()
                     self._status_var.set(
                         f"{len(results['events'])} events · "
                         f"{len(results['summary'])} summary rows"
@@ -275,7 +454,7 @@ class SpilloverFrame(ttk.Frame):
                     self._populate_events()
                     self._populate_summary()
                     self._populate_graph_metrics()
-                    self._plot_response()
+                    self._plot_first_summary_signal()
 
                 self.after(0, update)
 
@@ -293,7 +472,7 @@ class SpilloverFrame(ttk.Frame):
         self._event_rows.clear()
         for i in self.tree.get_children():
             self.tree.delete(i)
-        events = self.results["events"].sort_values("date", ascending=False).head(20)
+        events = self.results["events"].sort_values("date", ascending=False)
         for _, row in events.iterrows():
             iid = self.tree.insert(
                 "", tk.END,
@@ -302,12 +481,13 @@ class SpilloverFrame(ttk.Frame):
             self._event_rows[iid] = row
 
     def _populate_summary(self):
+        self._summary_rows.clear()
         for i in self.tree_sum.get_children():
             self.tree_sum.delete(i)
         summary = self.results["summary"].copy()
         if summary.empty:
             return
-        summary = summary.sort_values("hit_rate", ascending=False).head(50)
+        summary = prepare_spillover_summary_display(summary)
         abs_resp_cutoff = summary["median_resp"].abs().quantile(0.75)
         if pd.isna(abs_resp_cutoff):
             abs_resp_cutoff = 0.0
@@ -327,7 +507,7 @@ class SpilloverFrame(ttk.Frame):
             )
             p_value = row.get("p_value", pd.NA)
             q_value = row.get("q_value", pd.NA)
-            self.tree_sum.insert(
+            iid = self.tree_sum.insert(
                 "", tk.END,
                 values=(
                     row["ticker"], row["peer"], row["h"],
@@ -342,6 +522,7 @@ class SpilloverFrame(ttk.Frame):
                 ),
                 tags=("strong",) if is_strong else (),
             )
+            self._summary_rows[iid] = row
 
     def _populate_graph_metrics(self):
         if not _HAVE_NETWORKX or self.tree_graph is None:
@@ -381,19 +562,116 @@ class SpilloverFrame(ttk.Frame):
 
     # ---- Plots ----
 
+    def _reset_plot_axes(self):
+        self.fig.clf()
+        self.ax = self.fig.add_subplot(1, 1, 1)
+
     def _plot_response(self):
-        self.ax.clear()
+        self._reset_plot_axes()
         summary = self.results["summary"]
         if summary.empty:
             self.canvas.draw()
             return
         grp = summary.groupby("h")["median_resp"].mean()
-        self.ax.plot(grp.index, grp.values, marker="o", label="Median resp (avg across pairs)")
+        self.ax.plot(grp.index, grp.values, marker="o", label=RESPONSE_PLOT_LABEL)
         self.ax.set_xlabel("Horizon (days)")
-        self.ax.set_ylabel("Peer IV change")
-        self.ax.set_title("Average spillover response by horizon")
+        self.ax.set_ylabel(RESPONSE_Y_LABEL)
+        self.ax.set_title(RESPONSE_PLOT_TITLE)
         self.ax.axhline(0, color="black", linewidth=0.5)
         self.ax.legend()
+        self.fig.tight_layout()
+        self.canvas.draw()
+
+    def _plot_first_summary_signal(self):
+        children = self.tree_sum.get_children()
+        if not children:
+            self._plot_response()
+            return
+        first = children[0]
+        self.tree_sum.selection_set(first)
+        self.tree_sum.focus(first)
+        row = self._summary_rows.get(first)
+        if row is not None:
+            self._plot_rolling_signal(row)
+
+    def _on_summary_select(self, _):
+        sel = self.tree_sum.selection()
+        if not sel:
+            return
+        row = self._summary_rows.get(sel[0])
+        if row is not None:
+            self._plot_rolling_signal(row)
+
+    def _plot_rolling_signal(self, row: pd.Series):
+        trigger = row["ticker"]
+        peer = row["peer"]
+        horizon = int(row["h"])
+        signal = compute_rolling_spillover_signal(
+            self.results["responses"],
+            self.results["summary"],
+            trigger,
+            peer,
+            horizon,
+            window=ROLLING_SIGNAL_WINDOW_EVENTS,
+        )
+        self._reset_plot_axes()
+        if signal.empty:
+            self.ax.text(
+                0.5,
+                0.5,
+                "Rolling signal unavailable: missing event responses or baseline.",
+                ha="center",
+                va="center",
+                transform=self.ax.transAxes,
+            )
+            self.ax.set_axis_off()
+            self.canvas.draw()
+            return
+
+        self.fig.clf()
+        self.ax, ax_count = self.fig.subplots(
+            2,
+            1,
+            sharex=True,
+            gridspec_kw={"height_ratios": [4, 1]},
+        )
+        ax2 = self.ax.twinx()
+        self.ax.plot(
+            signal["date"],
+            signal["rolling_abnormal_response"],
+            color="#1f77b4",
+            marker="o",
+            label=ROLLING_SIGNAL_ABNORMAL_LABEL,
+        )
+        ax2.plot(
+            signal["date"],
+            signal["rolling_same_direction_probability"],
+            color="#2ca02c",
+            marker="s",
+            label=ROLLING_SIGNAL_DIRECTION_LABEL,
+        )
+        ax_count.step(
+            signal["date"],
+            signal["event_count"],
+            where="post",
+            color="gray",
+            linewidth=1.2,
+        )
+        self.ax.axhline(0, color="black", linewidth=0.5)
+        ax2.set_ylim(0.0, 1.0)
+        self.ax.set_ylabel("Abnormal response (% change)")
+        ax2.set_ylabel("Same-direction probability")
+        ax_count.set_xlabel("Event date")
+        ax_count.set_ylabel("Events")
+        ax_count.set_ylim(0, max(ROLLING_SIGNAL_WINDOW_EVENTS, int(signal["event_count"].max())) + 1)
+        self.ax.set_title(
+            f"{trigger} -> {peer}, H={horizon}d — {ROLLING_SIGNAL_TITLE_SUFFIX} "
+            f"(last {ROLLING_SIGNAL_WINDOW_EVENTS} events)"
+        )
+        lines, labels = self.ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        self.ax.legend(lines + lines2, labels + labels2, loc="best")
+        self.fig.autofmt_xdate()
         self.fig.tight_layout()
         self.canvas.draw()
 
@@ -406,18 +684,38 @@ class SpilloverFrame(ttk.Frame):
             self._plot_event_response(row["ticker"], row["date"])
 
     def _plot_event_response(self, ticker: str, date):
-        self.ax.clear()
+        self._reset_plot_axes()
         df = self.results["responses"]
         mask = (df["ticker"] == ticker) & (df["t0"] == date)
         subset = df.loc[mask]
         if subset.empty:
+            horizons = []
+        else:
+            horizons = sorted(subset["h"].dropna().astype(int).unique())
+        trigger_response = compute_trigger_event_response(
+            self._spillover_source_df,
+            ticker,
+            date,
+            horizons,
+        )
+        if not trigger_response.empty:
+            self.ax.plot(
+                trigger_response["h"],
+                trigger_response["response"],
+                marker="o",
+                linewidth=2.2,
+                label=f"{ticker} (trigger)",
+            )
+        if subset.empty and trigger_response.empty:
             self.canvas.draw()
             return
         for peer, grp in subset.groupby("peer"):
             self.ax.plot(grp["h"], grp["peer_pct"], marker="o", label=peer)
         self.ax.set_xlabel("Horizon (days)")
-        self.ax.set_ylabel("Peer IV change")
-        self.ax.set_title(f"{ticker} event on {pd.Timestamp(date).date()} — peer responses")
+        self.ax.set_ylabel(EVENT_RESPONSE_Y_LABEL)
+        self.ax.set_title(
+            f"{ticker} event on {pd.Timestamp(date).date()} — {EVENT_RESPONSE_TITLE_SUFFIX}"
+        )
         self.ax.axhline(0, color="black", linewidth=0.5)
         self.ax.legend()
         self.fig.tight_layout()

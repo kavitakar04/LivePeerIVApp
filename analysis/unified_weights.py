@@ -25,7 +25,7 @@ import pandas as pd
 
 # Delayed imports to avoid circular dependencies
 # from analysis.analysis_pipeline import get_smile_slice, available_dates
-from analysis.pillars import build_atm_matrix, DEFAULT_PILLARS_DAYS
+from analysis.pillar_selection import build_atm_matrix, DEFAULT_PILLARS_DAYS
 from analysis.settings import (
     DEFAULT_MAX_EXPIRIES,
     DEFAULT_MONEYNESS_BINS,
@@ -84,6 +84,8 @@ class WeightConfig:
     max_l1_norm: float = 3.0
     corr_shrinkage: float = 0.05
     pca_ridge: float = 1e-3
+    surface_missing_policy: str = "median_impute"
+    surface_min_coverage: float = 0.70
 
     @classmethod
     def from_mode(cls, mode: str, **kwargs) -> "WeightConfig":
@@ -218,6 +220,28 @@ def _zscore_cols(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     sd = np.sqrt(var)
     sd = np.where(~np.isfinite(sd) | (sd <= 0), 1.0, sd)
     return (X - mu) / sd, mu, sd
+
+
+def _apply_surface_missing_policy(
+    feature_df: pd.DataFrame,
+    *,
+    policy: str = "median_impute",
+    min_coverage: float = 0.70,
+) -> tuple[pd.DataFrame, str]:
+    """Apply surface feature coverage policy before similarity/weighting."""
+    if feature_df is None or feature_df.empty:
+        return feature_df, "empty surface feature frame"
+    df = feature_df.apply(pd.to_numeric, errors="coerce")
+    policy = str(policy or "median_impute").lower()
+    min_cov = float(np.clip(min_coverage, 0.0, 1.0))
+    if policy == "require_shared":
+        out = df.dropna(axis=1, how="any")
+        return out, f"require_shared dropped {df.shape[1] - out.shape[1]} non-shared cells"
+    if policy == "drop_sparse":
+        coverage = df.notna().mean(axis=0)
+        out = df.loc[:, coverage >= min_cov]
+        return out, f"drop_sparse kept {out.shape[1]}/{df.shape[1]} cells at min coverage {min_cov:.0%}"
+    return df, "median_impute retained sparse cells for downstream column-median imputation"
 
 
 def _condition_number(arr: np.ndarray) -> Optional[float]:
@@ -462,6 +486,8 @@ def surface_feature_matrix(
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
     standardize: bool = True,
+    missing_policy: str = "median_impute",
+    min_coverage: float = 0.70,
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
     """Rows=tickers, cols=flattened (tenor × moneyness) grid for a single as-of date."""
     # Route through the LRU-cached builder so repeated calls on same tickers/date
@@ -512,11 +538,20 @@ def surface_feature_matrix(
         logger.debug("No surface features constructed for %s on %s", req, asof)
         return {}, np.empty((0, 0)), []
 
-    X = _impute_col_median(np.vstack(feats))
+    raw = pd.DataFrame(np.vstack(feats), index=ok, columns=feat_names or [])
+    raw, _ = _apply_surface_missing_policy(
+        raw,
+        policy=missing_policy,
+        min_coverage=min_coverage,
+    )
+    if raw.empty or raw.shape[1] == 0:
+        logger.debug("Surface feature matrix empty after missing policy %s", missing_policy)
+        return {t: grids[t] for t in ok}, np.empty((0, 0)), []
+    X = _impute_col_median(raw.to_numpy(float))
     if standardize:
         X, _, _ = _zscore_cols(X)
     logger.debug("Surface feature matrix shape %s for tickers %s", X.shape, ok)
-    return {t: grids[t] for t in ok}, X, feat_names or []
+    return {t: grids[t] for t in ok}, X, list(raw.columns)
 
 
 def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
@@ -927,11 +962,7 @@ class UnifiedWeightComputer:
                 if Xp.size == 0:
                     raise ValueError("No peer data available for PCA weighting")
                 condition_number = _condition_number(Xp)
-                try:
-                    from analysis import beta_builder as _beta_builder
-                    pca_fn = getattr(_beta_builder, "pca_regress_weights", pca_regress_weights)
-                except Exception:
-                    pca_fn = pca_regress_weights
+                pca_fn = pca_regress_weights
                 try:
                     w = pca_fn(
                         Xp,
@@ -978,6 +1009,11 @@ class UnifiedWeightComputer:
             max_expiries=config.max_expiries,
             mny_bins=config.mny_bins,
         )
+        surface_df, policy_note = _apply_surface_missing_policy(
+            surface_df,
+            policy=config.surface_missing_policy,
+            min_coverage=config.surface_min_coverage,
+        )
         self._log_option_counts(tickers, asof, None)
         self._attach_feature_diagnostics(
             surface_df,
@@ -986,10 +1022,10 @@ class UnifiedWeightComputer:
             asof=asof,
             coordinate_system="native_expiry_rank_x_moneyness_bin",
             value_type="iv_levels",
-            missing_policy="column median imputation inside similarity/weights; raw NaNs retained in frame",
+            missing_policy=policy_note,
             normalization="none",
             n_expiries=config.max_expiries,
-            n_grid_points=len(names),
+            n_grid_points=surface_df.shape[1],
         )
         return surface_df
 
@@ -1046,18 +1082,43 @@ class UnifiedWeightComputer:
         if config.feature_set == FeatureSet.SURFACE:
             return self._build_surface_features(tickers, asof, config)
         if config.feature_set == FeatureSet.SURFACE_VECTOR:
-            grids, X, names = surface_feature_matrix(
-                tickers,
-                asof,
-                tenors=config.tenors,
-                mny_bins=config.mny_bins,
-            )
+            try:
+                grids, X, names = surface_feature_matrix(
+                    tickers,
+                    asof,
+                    tenors=config.tenors,
+                    mny_bins=config.mny_bins,
+                    missing_policy=config.surface_missing_policy,
+                    min_coverage=config.surface_min_coverage,
+                )
+            except TypeError:
+                grids, X, names = surface_feature_matrix(
+                    tickers,
+                    asof,
+                    tenors=config.tenors,
+                    mny_bins=config.mny_bins,
+                )
             logger.debug(
                 "surface_feature_matrix returned shape %s for tickers %s",
                 X.shape,
                 list(grids.keys()),
             )
             self._log_option_counts(tickers, asof, None)
+            if X.size == 0 or not names:
+                out = pd.DataFrame(index=list(grids.keys()))
+                self._attach_feature_diagnostics(
+                    out,
+                    config=config,
+                    requested=tickers,
+                    asof=asof,
+                    coordinate_system="standardized_tenor_grid_x_moneyness_bin",
+                    value_type="standardized_iv_levels",
+                    missing_policy=f"{config.surface_missing_policy}; min coverage {config.surface_min_coverage:.0%}",
+                    normalization="column_zscore",
+                    n_expiries=len(config.tenors),
+                    n_grid_points=0,
+                )
+                return out
             out = pd.DataFrame(X, index=list(grids.keys()), columns=names)
             self._attach_feature_diagnostics(
                 out,
@@ -1066,7 +1127,7 @@ class UnifiedWeightComputer:
                 asof=asof,
                 coordinate_system="standardized_tenor_grid_x_moneyness_bin",
                 value_type="standardized_iv_levels",
-                missing_policy="column median imputation before grid standardization",
+                missing_policy=f"{config.surface_missing_policy}; min coverage {config.surface_min_coverage:.0%}",
                 normalization="column_zscore",
                 n_expiries=len(config.tenors),
                 n_grid_points=len(names),

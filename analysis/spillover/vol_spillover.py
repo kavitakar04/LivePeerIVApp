@@ -50,6 +50,23 @@ def detect_events(df: pd.DataFrame, threshold: float = DEFAULT_SPILLOVER_EVENT_T
     return events.reset_index(drop=True)
 
 
+def _filter_events_to_lookback(events: pd.DataFrame, df: pd.DataFrame, lookback: int) -> pd.DataFrame:
+    """Keep trigger events in the trailing lookback calendar window."""
+    if events.empty or df.empty:
+        return events.copy()
+    try:
+        days = int(lookback)
+    except Exception:
+        days = DEFAULT_SPILLOVER_LOOKBACK_DAYS
+    if days <= 0:
+        return events.iloc[0:0].copy()
+    end = pd.to_datetime(df["date"]).max()
+    start = end - pd.Timedelta(days=days)
+    out = events.copy()
+    out["date"] = pd.to_datetime(out["date"])
+    return out.loc[out["date"] > start].reset_index(drop=True)
+
+
 def _load_peers_for_target(target: str, conn=None) -> List[str]:
     """Return peer tickers for a target using stored ticker groups."""
     groups = get_groups_for_target(target, conn)
@@ -61,6 +78,34 @@ def _load_peers_for_target(target: str, conn=None) -> List[str]:
     # Deduplicate and exclude the target itself
     uniq = {p.upper() for p in peers if p and p.upper() != target.upper()}
     return sorted(uniq)
+
+
+def _comparison_peer_map(tickers: Iterable[str], triggers: Iterable[str]) -> Dict[str, List[str]]:
+    """Return peer lists for spillover triggers inside an explicit universe.
+
+    If the GUI passes a comparison universe, every selected ticker should be
+    analyzable as a trigger.  Saved peer groups are still included, but a peer
+    ticker without its own saved group falls back to the other selected tickers
+    so event-click plots can populate for all rows in the event table.
+    """
+    universe = []
+    seen = set()
+    for ticker in tickers:
+        t = str(ticker).upper().strip()
+        if t and t not in seen:
+            universe.append(t)
+            seen.add(t)
+
+    peer_map: Dict[str, List[str]] = {}
+    for trigger in triggers:
+        t = str(trigger).upper().strip()
+        if not t:
+            continue
+        selected_peers = [p for p in universe if p != t]
+        stored_peers = _load_peers_for_target(t)
+        merged = selected_peers + [p for p in stored_peers if p not in selected_peers and p != t]
+        peer_map[t] = merged
+    return peer_map
 
 
 def compute_weights_and_regression(
@@ -183,7 +228,10 @@ def compute_responses(df: pd.DataFrame,
                     "peer_pct": pct,
                     "sign": e["sign"],
                 })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows,
+        columns=["ticker", "peer", "t0", "h", "trigger_pct", "peer_pct", "sign"],
+    )
 
 
 def _baseline_responses(
@@ -391,8 +439,10 @@ def run_spillover(
         This allows callers to supply data from any source (e.g. Parquet,
         database, API) without ``run_spillover`` needing to know the details.
     lookback : int, optional
-        Retained for backward compatibility; peer selection now relies on
-        pre-defined groups rather than historical correlations.
+        Number of trailing calendar days, ending at the latest available data
+        date, used to select trigger events. Response calculations still use
+        the full supplied panel so prior-day bases and forward horizons remain
+        available.
     top_k : int, optional
         Retained for backward compatibility and ignored.
 
@@ -405,14 +455,24 @@ def run_spillover(
         Dictionary with keys ``events``, ``responses`` and ``summary``.
     """
     df = source() if callable(source) else source
+    explicit_tickers = None
     if tickers is not None:
-        tickers = [t.upper() for t in tickers]
-        df = df[df["ticker"].str.upper().isin(tickers)]
+        explicit_tickers = [str(t).upper().strip() for t in tickers if str(t).strip()]
+        df = df[df["ticker"].str.upper().isin(explicit_tickers)]
     events = detect_events(df, threshold=threshold)
+    events = _filter_events_to_lookback(events, df, lookback)
     tick_set = events["ticker"].unique()
-    peers = {t: _load_peers_for_target(t) for t in tick_set}
+    if explicit_tickers is not None:
+        peers = _comparison_peer_map(explicit_tickers, tick_set)
+    else:
+        peers = {t: _load_peers_for_target(t) for t in tick_set}
     responses = compute_responses(df, events, peers, horizons=horizons)
-    baseline = _baseline_responses(df, responses[["ticker", "peer"]].drop_duplicates(), horizons)
+    response_pairs = (
+        responses[["ticker", "peer"]].drop_duplicates()
+        if {"ticker", "peer"}.issubset(responses.columns)
+        else pd.DataFrame(columns=["ticker", "peer"])
+    )
+    baseline = _baseline_responses(df, response_pairs, horizons)
     summary = summarise(responses, threshold=threshold, baseline=baseline)
     persist_events(events, events_path)
     persist_summary(summary, summary_path)

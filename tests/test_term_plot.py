@@ -85,6 +85,68 @@ def test_term_comparison_default_layers_are_target_and_composite():
     plt.close(fig)
 
 
+def test_term_plot_draws_quote_dispersion_as_thin_labeled_lines():
+    atm_curve = pd.DataFrame({
+        "T": [0.1, 0.2, 0.3],
+        "atm_vol": [0.20, 0.22, 0.24],
+        "quote_dispersion": [0.01, 0.02, np.nan],
+    })
+    peer_curve = pd.DataFrame({
+        "T": [0.1, 0.2, 0.3],
+        "atm_vol": [0.19, 0.21, 0.23],
+        "quote_dispersion": [0.015, 0.010, 0.012],
+    })
+    fig, ax = plt.subplots()
+
+    plot_term_structure_comparison(
+        ax,
+        atm_curve,
+        peer_curves={"P1": peer_curve},
+        x_units="years",
+        show_quote_dispersion=True,
+    )
+
+    labels = [text.get_text() for text in ax.get_legend().get_texts()]
+    assert "Target ATM quote dispersion" in labels
+    assert "P1 quote dispersion" in labels
+    target_disp = next(line for line in ax.lines if line.get_label() == "Target ATM quote dispersion")
+    assert target_disp.get_linestyle() == ":"
+    assert target_disp.get_linewidth() < 1.0
+    plt.close(fig)
+
+
+def test_term_data_preserves_quote_dispersion_for_single_atm(monkeypatch):
+    from analysis import term_data_service
+    from analysis.term_data_service import prepare_term_data
+
+    def make_slice(_ticker: str) -> pd.DataFrame:
+        spot = 100.0
+        return pd.DataFrame(
+            [
+                {
+                    "T": 30 / 365.25,
+                    "moneyness": mny,
+                    "sigma": sigma,
+                    "K": spot * mny,
+                    "S": spot,
+                    "expiry": pd.Timestamp("2024-01-31"),
+                }
+                for mny, sigma in [(0.96, 0.20), (0.99, 0.22), (1.01, 0.24), (1.04, 0.26)]
+            ]
+        )
+
+    monkeypatch.setattr(
+        term_data_service,
+        "get_smile_slice",
+        lambda ticker, asof, T_target_years=None, max_expiries=None: make_slice(ticker.upper()),
+    )
+
+    data = prepare_term_data(target="TGT", asof="2024-01-01", ci=0, max_expiries=1)
+
+    assert np.isfinite(data["atm_curve"].loc[0, "quote_dispersion"])
+    assert data["atm_curve"].loc[0, "band_source"] == "none_single_atm"
+
+
 def test_plot_manager_term_defaults_hide_peer_lines_and_fit():
     pm = PlotManager()
     data = {
@@ -128,8 +190,8 @@ def test_plot_manager_term_shows_peer_legend_when_overlay_enabled():
 
 
 def test_prepare_term_data_uses_same_atm_path_and_aligned_composite(monkeypatch):
-    from analysis.analysis_pipeline import prepare_term_data
-    import analysis.analysis_pipeline as pipeline
+    from analysis import term_data_service
+    from analysis.term_data_service import prepare_term_data
 
     def make_slice(ticker: str) -> pd.DataFrame:
         spot = 100.0
@@ -150,7 +212,7 @@ def test_prepare_term_data_uses_same_atm_path_and_aligned_composite(monkeypatch)
         return pd.DataFrame(rows)
 
     monkeypatch.setattr(
-        pipeline,
+        term_data_service,
         "get_smile_slice",
         lambda ticker, asof, T_target_years=None, max_expiries=None: make_slice(ticker.upper()),
     )
@@ -174,6 +236,54 @@ def test_prepare_term_data_uses_same_atm_path_and_aligned_composite(monkeypatch)
     for curve in data["peer_curves"].values():
         assert set(curve["model"]) != {"median"}
         assert {"spot", "atm_strike", "iv_source", "count"}.issubset(curve.columns)
+
+
+def test_prepare_term_data_does_not_expand_target_beyond_common_grid(monkeypatch):
+    from analysis import term_data_service
+    from analysis.term_data_service import prepare_term_data
+
+    def make_curve(ticker: str) -> pd.DataFrame:
+        days_by_ticker = {
+            "TGT": [5, 12, 19, 26, 33, 53],
+            "P1": [5, 12, 19, 26, 33, 53],
+            "P2": [19, 53],
+        }
+        rows = []
+        for days in days_by_ticker[ticker]:
+            rows.append({
+                "T": days / 365.25,
+                "atm_vol": 0.20 + days / 10000.0,
+                "expiry": pd.Timestamp("2024-01-01") + pd.Timedelta(days=days),
+                "model": "svi",
+                "spot": 100.0,
+                "atm_strike": 100.0,
+                "iv_source": "sigma",
+                "count": 5,
+            })
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(
+        term_data_service,
+        "_compute_term_atm_curve",
+        lambda ticker, asof, **kwargs: make_curve(ticker.upper()),
+    )
+
+    data = prepare_term_data(
+        target="TGT",
+        asof="2024-01-01",
+        ci=0,
+        overlay_synth=True,
+        peers=["P1", "P2"],
+        weights={"P1": 0.5, "P2": 0.5},
+        max_expiries=10,
+    )
+
+    target_days = list(np.round(data["atm_curve"]["T"].to_numpy(float) * 365.25).astype(int))
+    synth_days = list(np.round(data["synth_curve"]["T"].to_numpy(float) * 365.25).astype(int))
+
+    assert target_days == [19, 53]
+    assert synth_days == [19, 53]
+    assert all(len(curve) == 2 for curve in data["peer_curves"].values())
 
 
 def test_plot_manager_clear_child_axes_removes_stale_insets():

@@ -34,7 +34,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.cache_io import compute_or_load
-from analysis.analysis_pipeline import prepare_smile_data, get_smile_slice
+from analysis.smile_data_service import prepare_smile_data, get_smile_slice
 from analysis.correlation_view import corr_by_expiry_rank
 from analysis.settings import DEFAULT_ATM_BAND, DEFAULT_MAX_EXPIRIES
 from analysis.spillover.vol_spillover import run_spillover, load_iv_data

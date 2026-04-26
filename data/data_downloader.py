@@ -4,6 +4,7 @@ Thin Yahoo Finance downloader.
 - Returns a DataFrame with minimal raw fields + asof_date, spot.
 """
 from __future__ import annotations
+from collections.abc import Iterable
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timezone
@@ -23,9 +24,31 @@ def _get_spot(tk: yf.Ticker) -> float | None:
             pass
     return float(spot) if spot is not None else None
 
-def download_raw_option_data(ticker: str, max_expiries: int = 8) -> pd.DataFrame | None:
+
+def get_available_expiries(ticker: str) -> list[str]:
+    """Return the provider expiry list for a ticker without fetching chains."""
     tk = yf.Ticker(ticker)
-    expiries = tk.options or []
+    return [str(expiry) for expiry in (tk.options or [])]
+
+
+def download_raw_option_data(
+    ticker: str,
+    max_expiries: int = 8,
+    expiries: Iterable[str] | None = None,
+) -> pd.DataFrame | None:
+    tk = yf.Ticker(ticker)
+    provider_expiries = [str(expiry) for expiry in (tk.options or [])]
+    if expiries is None:
+        expiries_to_fetch = provider_expiries[:max_expiries]
+    else:
+        requested = [str(expiry) for expiry in expiries]
+        available = set(provider_expiries)
+        expiries_to_fetch = [expiry for expiry in requested if expiry in available]
+        missing = [expiry for expiry in requested if expiry not in available]
+        if missing:
+            print(f"{ticker}: requested expiries not listed by provider: {missing}")
+
+    expiries = expiries_to_fetch
     if not expiries:
         return None
 

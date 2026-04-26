@@ -139,7 +139,7 @@ def fit_and_plot_smile(
 
     # ---- confidence bands
     if bands is not None:
-        ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% CI")
+        ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% model-fit CI")
         ci_mean = ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
         if enable_toggles:
             series_map[f"{model.upper()} Confidence Interval"] = [ci_fill, *ci_mean]

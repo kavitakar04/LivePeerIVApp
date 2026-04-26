@@ -59,6 +59,39 @@ The implementation work from this assessment was migrated to `TASKS.MD` as
 5. **Regime comparison**
    - Compare graph topology by date range (dense vs fragmented markets).
 
+## Market knowledge graph layer
+
+The first implementation is additive in `analysis/market_graph.py`.  It builds
+a typed `networkx.MultiDiGraph` from existing analysis artifacts rather than
+introducing a separate data model.
+
+Current evidence layers:
+
+- Correlation matrix edges: `correlated_with`
+- Surface-similarity matrix edges: `similar_surface_to`
+- Spillover summary edges: `spills_over_to`
+- Peer-composite weight edges: `explains_composite_for`
+- Optional theme edges: `shares_theme_with`
+- Model quality attributes on ticker nodes
+
+Current analysis outputs:
+
+- `rank_peer_candidates(G)`: ranks peers using surface similarity, absolute
+  correlation, spillover strength, composite weight, and model quality.
+- `graph_confidence_features(G)`: summarizes peer-count, mean/min graph score,
+  evidence density, and whether surface/spillover support is present.
+- `explain_rv_signal_with_graph(G)`: emits compact explanation bullets that can
+  be surfaced in RV diagnostics.
+
+This is intended to improve analysis quality in three ways:
+
+1. Peer sets can be scored by relationship evidence instead of only by the
+   manually entered list.
+2. RV confidence can distinguish broad support from a single fragile evidence
+   layer.
+3. The GUI can explain which peers are driving a signal and why those peers are
+   valid comparables.
+
 ## Data-model and API recommendations
 
 - Keep graph building deterministic by sorting tickers and setting layout seeds.

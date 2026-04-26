@@ -23,11 +23,14 @@ DEFAULT_NEAR_TERM_PILLAR_DAYS: Tuple[int, ...] = (7, 14, 30)
 DEFAULT_EXTENDED_PILLAR_DAYS: Tuple[int, ...] = (7, 14, 30, 60, 90, 180, 365)
 DEFAULT_PILLAR_TOLERANCE_DAYS = 14.0
 DEFAULT_ATM_BAND = 0.05
+DEFAULT_SMILE_MONEYNESS_RANGE: Tuple[float, float] = (0.70, 1.30)
+DEFAULT_SMILE_GRID_POINTS = 121
 DEFAULT_WEIGHT_ATM_BAND = 0.08
 DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS = 10.0
 DEFAULT_MAX_EXPIRIES = 10
 
 # Relative-value and spillover windows
+DEFAULT_UNDERLYING_LOOKBACK_DAYS = 500
 DEFAULT_RV_LOOKBACK_DAYS = 60
 DEFAULT_SPILLOVER_EVENT_THRESHOLD = 0.10
 DEFAULT_SPILLOVER_LOOKBACK_DAYS = 60
@@ -61,6 +64,7 @@ class AnalysisDefaults:
     moneyness_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MONEYNESS_BINS
     pillar_tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
     atm_band: float = DEFAULT_ATM_BAND
+    smile_moneyness_range: Tuple[float, float] = DEFAULT_SMILE_MONEYNESS_RANGE
     max_expiries: int = DEFAULT_MAX_EXPIRIES
     rv_lookback_days: int = DEFAULT_RV_LOOKBACK_DAYS
     spillover_threshold: float = DEFAULT_SPILLOVER_EVENT_THRESHOLD
@@ -109,5 +113,30 @@ def parse_moneyness_bins(
                 raise ValueError(part)
             bins.append((lo, hi))
         return tuple(bins) or fallback
+    except Exception:
+        return fallback
+
+
+def format_moneyness_range(mny_range: Tuple[float, float] = DEFAULT_SMILE_MONEYNESS_RANGE) -> str:
+    """Return compact text representation like ``0.70-1.30``."""
+    lo, hi = mny_range
+    return f"{float(lo):.2f}-{float(hi):.2f}"
+
+
+def parse_moneyness_range(
+    text: str,
+    fallback: Tuple[float, float] = DEFAULT_SMILE_MONEYNESS_RANGE,
+) -> Tuple[float, float]:
+    """Parse a smile moneyness range such as ``0.70-1.30``."""
+    try:
+        raw = str(text).strip()
+        if not raw or "-" not in raw:
+            raise ValueError(raw)
+        lo_s, hi_s = raw.split("-", 1)
+        lo = float(lo_s.strip())
+        hi = float(hi_s.strip())
+        if not (0.0 < lo < hi and hi < 10.0):
+            raise ValueError(raw)
+        return (lo, hi)
     except Exception:
         return fallback

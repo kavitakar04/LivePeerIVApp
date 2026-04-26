@@ -4,6 +4,7 @@ import numpy as np
 from analysis.spillover.vol_spillover import (
     compute_responses,
     compute_weights_and_regression,
+    run_spillover,
     summarise,
 )
 
@@ -25,6 +26,108 @@ def test_compute_responses_horizon_offsets():
     responses = compute_responses(df, events, peers, horizons=[1, 2])
     result = responses.sort_values('h')['peer_pct'].tolist()
     assert np.allclose(result, [0.2, 0.3])
+
+
+def test_compute_responses_empty_has_expected_columns():
+    dates = pd.date_range('2023-01-01', periods=2)
+    df = pd.DataFrame({
+        'date': list(dates) * 2,
+        'ticker': ['AAA'] * 2 + ['BBB'] * 2,
+        'atm_iv': [100, 101, 50, 51],
+    })
+    out = compute_responses(
+        df,
+        pd.DataFrame(columns=["ticker", "date", "rel_change", "sign"]),
+        {"AAA": ["BBB"]},
+        horizons=[1],
+    )
+
+    assert list(out.columns) == ["ticker", "peer", "t0", "h", "trigger_pct", "peer_pct", "sign"]
+    assert out.empty
+
+
+def test_run_spillover_uses_full_lookback_window_not_top_20(monkeypatch, tmp_path):
+    dates = pd.date_range("2024-01-01", periods=40, freq="D")
+    aaa = 100.0 * (1.02 ** np.arange(len(dates)))
+    bbb = 50.0 * (1.01 ** np.arange(len(dates)))
+    df = pd.DataFrame({
+        "date": list(dates) * 2,
+        "ticker": ["AAA"] * len(dates) + ["BBB"] * len(dates),
+        "atm_iv": np.concatenate([aaa, bbb]),
+    })
+
+    monkeypatch.setattr(
+        "analysis.spillover.vol_spillover.get_groups_for_target",
+        lambda ticker, conn=None: ["grp"] if ticker == "AAA" else [],
+    )
+    monkeypatch.setattr(
+        "analysis.spillover.vol_spillover.load_ticker_group",
+        lambda name, conn=None: {"peer_tickers": ["BBB"]} if name == "grp" else None,
+    )
+
+    result = run_spillover(
+        df,
+        tickers=["AAA", "BBB"],
+        threshold=0.01,
+        lookback=30,
+        horizons=[1],
+        events_path=str(tmp_path / "events.parquet"),
+        summary_path=str(tmp_path / "summary.parquet"),
+    )
+
+    aaa_events = result["events"][result["events"]["ticker"] == "AAA"]
+    assert len(aaa_events) > 20
+    assert aaa_events["date"].min() > dates.max() - pd.Timedelta(days=30)
+    assert aaa_events["date"].max() == dates.max()
+
+
+def test_run_spillover_explicit_universe_populates_peer_trigger_responses(monkeypatch, tmp_path):
+    dates = pd.date_range("2024-01-01", periods=5, freq="D")
+    df = pd.DataFrame({
+        "date": list(dates) * 3,
+        "ticker": ["AAA"] * 5 + ["BBB"] * 5 + ["CCC"] * 5,
+        "atm_iv": [
+            100, 100, 100, 100, 100,
+            50, 60, 60, 60, 60,
+            30, 33, 36, 39, 42,
+        ],
+    })
+
+    def fake_get_groups(ticker, conn=None):
+        return ["grp"] if ticker == "AAA" else []
+
+    def fake_load_group(name, conn=None):
+        return {"peer_tickers": ["BBB", "CCC"]} if name == "grp" else None
+
+    monkeypatch.setattr(
+        "analysis.spillover.vol_spillover.get_groups_for_target",
+        fake_get_groups,
+    )
+    monkeypatch.setattr(
+        "analysis.spillover.vol_spillover.load_ticker_group",
+        fake_load_group,
+    )
+
+    result = run_spillover(
+        df,
+        tickers=["AAA", "BBB", "CCC"],
+        threshold=0.10,
+        lookback=30,
+        horizons=[1],
+        events_path=str(tmp_path / "events.parquet"),
+        summary_path=str(tmp_path / "summary.parquet"),
+    )
+
+    bbb_event_responses = result["responses"][
+        (result["responses"]["ticker"] == "BBB")
+        & (result["responses"]["t0"] == dates[1])
+    ]
+
+    assert set(bbb_event_responses["peer"]) == {"AAA", "CCC"}
+    assert not result["summary"][
+        (result["summary"]["ticker"] == "BBB")
+        & (result["summary"]["peer"].isin(["AAA", "CCC"]))
+    ].empty
 
 
 def test_summarise_adds_statistical_context():

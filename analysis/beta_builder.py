@@ -16,7 +16,7 @@ from analysis.unified_weights import (
     _impute_col_median,  # internal helper reused here
 )
 
-from analysis.pillars import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
+from analysis.pillar_selection import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
 from analysis.correlation_utils import compute_atm_corr_pillar_free
 from analysis.settings import (
     DEFAULT_MONEYNESS_BINS,
@@ -231,7 +231,7 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     aggregated across a few recent dates, then fanned out to "pillars".
     """
     from data.db_utils import get_conn
-    from analysis.analysis_pipeline import get_smile_slice
+    from analysis.smile_data_service import get_smile_slice
     from analysis.correlation_utils import compute_atm_corr_pillar_free
 
     conn = get_conn()

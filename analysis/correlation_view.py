@@ -95,7 +95,7 @@ def corr_by_expiry_rank(
     # Single DB query for all tickers on this date
     slices: dict = {}
     try:
-        from analysis.analysis_pipeline import get_smile_slices_batch
+        from analysis.smile_data_service import get_smile_slices_batch
         slices = get_smile_slices_batch(tickers, asof, max_expiries=max_expiries)
     except Exception:
         pass  # fallback to per-ticker callable below

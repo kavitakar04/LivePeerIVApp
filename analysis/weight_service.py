@@ -7,7 +7,7 @@ from typing import Iterable, Tuple
 import pandas as pd
 
 from analysis.peer_composite_builder import DEFAULT_MNY_BINS, DEFAULT_TENORS
-from analysis.pillars import DEFAULT_PILLARS_DAYS
+from analysis.pillar_selection import DEFAULT_PILLARS_DAYS
 from analysis.unified_weights import compute_unified_weights
 
 
@@ -26,6 +26,8 @@ def compute_peer_weights(
     pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
     tenor_days: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
+    surface_missing_policy: str = "median_impute",
+    surface_min_coverage: float = 0.70,
     clip_negative: bool = True,
     power: float = 1.0,
 ) -> pd.Series:
@@ -38,6 +40,8 @@ def compute_peer_weights(
         pillars_days=pillar_days,
         tenors=tenor_days,
         mny_bins=mny_bins,
+        surface_missing_policy=surface_missing_policy,
+        surface_min_coverage=surface_min_coverage,
         clip_negative=clip_negative,
         power=power,
     )

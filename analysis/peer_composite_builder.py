@@ -12,7 +12,7 @@ from data.quote_quality import (
     ANALYTICS_MIN_MONEYNESS,
     filter_quotes,
 )
-from analysis.pillars import load_atm, nearest_pillars
+from analysis.pillar_selection import load_atm, nearest_pillars
 from analysis.settings import (
     DEFAULT_MONEYNESS_BINS,
     DEFAULT_ATM_BAND,
@@ -323,7 +323,7 @@ def build_synthetic_iv_by_rank(
     atm_band: float = DEFAULT_ATM_BAND,
 ) -> pd.DataFrame:
     """Combine peer ATM vols by expiry rank into a composite curve for one date."""
-    from analysis.analysis_pipeline import get_smile_slice
+    from analysis.smile_data_service import get_smile_slice
     from analysis.correlation_utils import compute_atm_corr_pillar_free
 
     weights = {k.upper(): float(v) for k, v in dict(weights).items()}

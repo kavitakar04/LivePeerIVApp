@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Iterable, List, Optional, Tuple
 from dataclasses import dataclass
 
-from .pillars import build_atm_matrix, detect_available_pillars, EXTENDED_PILLARS_DAYS
+from .pillar_selection import build_atm_matrix, detect_available_pillars, EXTENDED_PILLARS_DAYS
 from .settings import (
     DEFAULT_ATM_BAND,
     DEFAULT_MAX_EXPIRIES,

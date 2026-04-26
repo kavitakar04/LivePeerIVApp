@@ -102,3 +102,21 @@ def test_data_service_facades_preserve_pipeline_routes():
     assert gui_plot_manager.prepare_rv_heatmap_data is rv_heatmap_service.prepare_rv_heatmap_data
     assert spillover_gui.get_daily_iv_for_spillover is data_availability_service.get_daily_iv_for_spillover
     assert spillover_gui.get_daily_hv_for_spillover is data_availability_service.get_daily_hv_for_spillover
+
+
+def test_ingest_facade_accepts_underlying_lookback(monkeypatch):
+    import analysis.analysis_pipeline as pipeline
+
+    seen = {}
+
+    def fake_save_for_tickers(tickers, max_expiries=10, r=0.0, q=0.0, underlying_lookback_days=500):
+        seen["tickers"] = tickers
+        seen["underlying_lookback_days"] = underlying_lookback_days
+        return 7
+
+    monkeypatch.setattr(pipeline, "save_for_tickers", fake_save_for_tickers)
+
+    inserted = pipeline.ingest_and_process(["aaa"], underlying_lookback_days=800)
+
+    assert inserted == 7
+    assert seen == {"tickers": ["AAA"], "underlying_lookback_days": 800}

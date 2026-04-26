@@ -67,3 +67,5 @@ animation_demo.png
 test_animation_integration.py
 test_browser_integration.py
 demo_animation.py
+data/*.parquet
+data/*.parquet.corrupt.*

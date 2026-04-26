@@ -254,3 +254,27 @@ def test_surface_grid_reindexes_mismatched_peer_shapes_before_stacking(monkeypat
         "T90_0.90-1.00",
         "T90_1.00-1.10",
     ]
+
+
+def test_surface_missing_policy_drops_sparse_cells():
+    from analysis.unified_weights import _apply_surface_missing_policy
+
+    features = pd.DataFrame(
+        {
+            "shared": [0.20, 0.21, 0.22],
+            "two_of_three": [0.30, 0.31, np.nan],
+            "sparse": [0.40, np.nan, np.nan],
+        },
+        index=["TGT", "P1", "P2"],
+    )
+
+    dropped, note = _apply_surface_missing_policy(
+        features,
+        policy="drop_sparse",
+        min_coverage=0.70,
+    )
+    required, _ = _apply_surface_missing_policy(features, policy="require_shared")
+
+    assert list(dropped.columns) == ["shared"]
+    assert list(required.columns) == ["shared"]
+    assert "drop_sparse kept 1/3" in note

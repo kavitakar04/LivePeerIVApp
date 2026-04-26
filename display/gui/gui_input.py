@@ -52,12 +52,16 @@ from analysis.settings import (
     DEFAULT_OVERLAY,
     DEFAULT_PILLAR_DAYS,
     DEFAULT_PILLAR_TOLERANCE_DAYS,
+    DEFAULT_SMILE_MONEYNESS_RANGE,
+    DEFAULT_UNDERLYING_LOOKBACK_DAYS,
     DEFAULT_WEIGHT_METHOD,
     DEFAULT_WEIGHT_POWER,
     DEFAULT_X_UNITS,
     format_moneyness_bins,
+    format_moneyness_range,
     parse_int_list,
     parse_moneyness_bins,
+    parse_moneyness_range,
 )
 from volModel.models import GUI_MODELS
 
@@ -73,7 +77,9 @@ PERSISTED_SETTING_KEYS = (
     "ci",
     "x_units",
     "atm_band",
+    "smile_moneyness_range",
     "pillar_tolerance_days",
+    "underlying_lookback_days",
     "mny_bins",
     "weight_method",
     "feature_mode",
@@ -196,6 +202,14 @@ def _format_pref_bins(value: Any) -> str:
         ",".join(f"{lo}-{hi}" for lo, hi in value) if isinstance(value, list) else str(value)
     )
     return format_moneyness_bins(bins)
+
+
+def _format_pref_range(value: Any) -> str:
+    if isinstance(value, list) and len(value) == 2:
+        text = f"{value[0]}-{value[1]}"
+    else:
+        text = str(value)
+    return format_moneyness_range(parse_moneyness_range(text))
 PLOT_TYPES = (
     "Smile (K/S vs IV)",
     "Term (ATM vs T)",
@@ -487,7 +501,14 @@ class InputPanel(ttk.Frame):
         self.ent_mny_bins.grid(row=0, column=9, padx=(4, 10))
         self.ent_mny_bins.bind("<KeyRelease>", self._sync_settings)
 
-        ttk.Label(row4, text="CI (%)").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(row4, text="Smile K/S").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.ent_smile_mny_range = ttk.Entry(row4, width=10)
+        pref_smile_range = self._preferences.get("smile_moneyness_range")
+        self.ent_smile_mny_range.insert(0, _format_pref_range(pref_smile_range) if pref_smile_range else format_moneyness_range())
+        self.ent_smile_mny_range.grid(row=1, column=1, padx=(4, 10), pady=(6, 0))
+        self.ent_smile_mny_range.bind("<KeyRelease>", self._sync_settings)
+
+        ttk.Label(row4, text="CI (%)").grid(row=1, column=2, sticky="w", pady=(6, 0))
         self.ent_ci = ttk.Entry(row4, width=6)
         pref_ci = self._preferences.get("ci")
         if pref_ci is not None:
@@ -500,8 +521,17 @@ class InputPanel(ttk.Frame):
                 self.ent_ci.insert(0, f"{ci_percent:.0f}")
         else:
             self.ent_ci.insert(0, f"{ci_percent:.0f}")
-        self.ent_ci.grid(row=1, column=1, padx=(4, 10), pady=(6, 0))
+        self.ent_ci.grid(row=1, column=3, padx=(4, 10), pady=(6, 0))
         self.ent_ci.bind("<KeyRelease>", self._sync_settings)
+
+        ttk.Label(row4, text="UL days").grid(row=1, column=4, sticky="w", pady=(6, 0))
+        self.ent_underlying_days = ttk.Entry(row4, width=7)
+        self.ent_underlying_days.insert(
+            0,
+            str(self._preferences.get("underlying_lookback_days", DEFAULT_UNDERLYING_LOOKBACK_DAYS)),
+        )
+        self.ent_underlying_days.grid(row=1, column=5, padx=(4, 10), pady=(6, 0))
+        self.ent_underlying_days.bind("<KeyRelease>", self._sync_settings)
 
         # initial sync
         self._sync_settings()
@@ -673,6 +703,15 @@ class InputPanel(ttk.Frame):
     def get_mny_bins(self):
         return parse_moneyness_bins(self.ent_mny_bins.get())
 
+    def get_smile_moneyness_range(self) -> tuple[float, float]:
+        return parse_moneyness_range(self.ent_smile_mny_range.get(), DEFAULT_SMILE_MONEYNESS_RANGE)
+
+    def get_underlying_lookback_days(self) -> int:
+        try:
+            return max(1, int(float(self.ent_underlying_days.get())))
+        except Exception:
+            return DEFAULT_UNDERLYING_LOOKBACK_DAYS
+
     def get_settings(self) -> dict:
         """Return a snapshot of all current settings."""
         self._sync_settings()
@@ -706,7 +745,9 @@ class InputPanel(ttk.Frame):
                 ci=self.get_ci(),
                 x_units=self.get_x_units(),
                 atm_band=self.get_atm_band(),
+                smile_moneyness_range=self.get_smile_moneyness_range(),
                 pillar_tolerance_days=self.get_pillar_tolerance_days(),
+                underlying_lookback_days=self.get_underlying_lookback_days(),
                 mny_bins=self.get_mny_bins(),
                 weight_method=weight_method,
                 feature_mode=feature_mode,

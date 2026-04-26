@@ -10,8 +10,9 @@ sys.path.insert(0, os.path.abspath('.'))
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from analysis.analysis_pipeline import get_smile_slice, available_dates
-from analysis.pillars import compute_atm_by_expiry
+from analysis.smile_data_service import get_smile_slice
+from analysis.data_availability_service import available_dates
+from analysis.atm_extraction import compute_atm_by_expiry
 from display.plotting.smile_plot import fit_and_plot_smile
 from display.plotting.term_plot import plot_atm_term_structure
 from volModel.sviFit import fit_svi_slice

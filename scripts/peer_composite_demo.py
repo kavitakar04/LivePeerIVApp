@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 
 from analysis.peer_composite_service import PeerCompositeConfig, PeerCompositeBuilder
 from display.plotting.peer_composite_viewer import show_peer_composite
-from analysis.analysis_pipeline import ingest_and_process, available_dates
+from analysis.data_availability_service import ingest_and_process, available_dates
 from analysis.settings import (
     DEFAULT_PILLAR_DAYS,
     DEFAULT_PILLAR_TOLERANCE_DAYS,

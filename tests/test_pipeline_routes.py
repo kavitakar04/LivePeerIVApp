@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from analysis.analysis_pipeline import compute_peer_weights
+from analysis.weight_service import compute_peer_weights
 
 
 def test_compute_peer_weights_dispatch(monkeypatch):

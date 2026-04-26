@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from analysis.settings import DEFAULT_ATM_BAND
+from analysis.confidence_bands import normalize_confidence_level
 from volModel.quality import validate_model_fit, warn_model_fallback
 
 _HAS_SVI = False
@@ -258,9 +259,40 @@ def compute_atm_by_expiry(
     rows = []
     for T_val, g in d.groupby("T"):
         g = g.dropna(subset=["moneyness", "sigma"])
+        near_atm = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
+        dispersion_obs = near_atm["sigma"] if len(near_atm) >= 2 else g["sigma"]
+        obs_std = float(pd.to_numeric(dispersion_obs, errors="coerce").std(ddof=1)) if len(dispersion_obs) >= 2 else np.nan
+
+        if method == "single":
+            if "is_atm" in g.columns and pd.to_numeric(g["is_atm"], errors="coerce").fillna(0).astype(int).eq(1).any():
+                atm_idx = int(g.loc[pd.to_numeric(g["is_atm"], errors="coerce").fillna(0).astype(int).eq(1)].index[0])
+            else:
+                atm_idx = int((g["moneyness"] - 1.0).abs().idxmin())
+            row = {
+                "T": float(T_val),
+                "atm_vol": float(g.loc[atm_idx, "sigma"]),
+                "count": 1,
+                "mny_min": float(g["moneyness"].min()),
+                "mny_max": float(g["moneyness"].max()),
+                "rmse": np.nan,
+                "model": "single_atm",
+                "atm_lo": np.nan,
+                "atm_hi": np.nan,
+                "atm_dispersion": obs_std,
+                "skew": np.nan,
+                "curv": np.nan,
+                "spot": float(np.nanmedian(g["S"])) if "S" in g.columns else np.nan,
+                "atm_strike": float(g.loc[atm_idx, "K"]) if "K" in g.columns else np.nan,
+                "iv_source": "sigma",
+                "extraction_status": "single_atm",
+            }
+            if "expiry" in g.columns:
+                row["expiry"] = g["expiry"].mode().iloc[0]
+            rows.append(row)
+            continue
 
         if len(g) < max(3, min_points) or method == "median":
-            inb = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
+            inb = near_atm
             if not inb.empty:
                 atm_vol = float(inb["sigma"].median())
                 cnt = int(len(inb))
@@ -279,6 +311,7 @@ def compute_atm_by_expiry(
                 "model": "median",
                 "atm_lo": np.nan,
                 "atm_hi": np.nan,
+                "atm_dispersion": obs_std,
                 "skew": np.nan,
                 "curv": np.nan,
                 "spot": float(np.nanmedian(g["S"])) if "S" in g.columns else np.nan,
@@ -306,7 +339,8 @@ def compute_atm_by_expiry(
                     boots.append(np.nan)
             boots = np.array([b for b in boots if np.isfinite(b)], float)
             if boots.size >= 10:
-                alpha = (1.0 - float(ci_level)) / 2.0
+                level = normalize_confidence_level(ci_level)
+                alpha = (1.0 - level) / 2.0
                 atm_lo = float(np.quantile(boots, alpha))
                 atm_hi = float(np.quantile(boots, 1 - alpha))
 
@@ -320,6 +354,7 @@ def compute_atm_by_expiry(
             "model": str(res.get("model", "unknown")),
             "atm_lo": atm_lo,
             "atm_hi": atm_hi,
+            "atm_dispersion": obs_std,
             "skew": float(res.get("skew", np.nan)),
             "curv": float(res.get("curv", np.nan)),
             "spot": float(np.nanmedian(g["S"])) if "S" in g.columns else np.nan,

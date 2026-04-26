@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.data_availability_service import available_tickers, available_dates, ingest_and_process
+from data.historical_saver import get_last_coverage_report
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager, plot_id
 from display.gui.spillover_gui import SpilloverFrame
@@ -31,10 +32,10 @@ from display.gui.rv_signals_tab import RVSignalsFrame
 
 BROWSER_TAB_LABELS = (
     "IV Explorer",
+    "Settings / Data & Model Health",
     "Parameter Summary",
     "Spillover",
     "RV Signals",
-    "Settings / Data & Model Health",
 )
 
 
@@ -103,21 +104,19 @@ class BrowserApp(tk.Tk):
             on_open_signals=self._open_health_signals,
         )
         self.tab_health.pack(fill=tk.BOTH, expand=True)
+        self.notebook.add(self.tab_status, text=BROWSER_TAB_LABELS[1])
 
         # ---- Parameter summary tab ----
         self.tab_params = ParametersTab(self.notebook)
-        self.notebook.add(self.tab_params, text=BROWSER_TAB_LABELS[1])
+        self.notebook.add(self.tab_params, text=BROWSER_TAB_LABELS[2])
 
         # ---- Spillover tab ----
         self.tab_spillover = SpilloverFrame(self.notebook, input_panel=self.inputs)
-        self.notebook.add(self.tab_spillover, text=BROWSER_TAB_LABELS[2])
+        self.notebook.add(self.tab_spillover, text=BROWSER_TAB_LABELS[3])
 
         # ---- RV Signals tab ----
         self.tab_rv_signals = RVSignalsFrame(self.notebook, input_panel=self.inputs)
-        self.notebook.add(self.tab_rv_signals, text=BROWSER_TAB_LABELS[3])
-
-        # ---- Settings / system health tab ----
-        self.notebook.add(self.tab_status, text=BROWSER_TAB_LABELS[4])
+        self.notebook.add(self.tab_rv_signals, text=BROWSER_TAB_LABELS[4])
 
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
@@ -210,6 +209,7 @@ class BrowserApp(tk.Tk):
             self.status.config(text="No tickers specified")
             return
         max_exp = self.inputs.get_max_exp()
+        underlying_lookback_days = self.inputs.get_underlying_lookback_days()
         r, q = self.inputs.get_rates()
 
         # Provide immediate feedback and disable download button
@@ -218,18 +218,42 @@ class BrowserApp(tk.Tk):
 
         def worker():
             try:
-                inserted = ingest_and_process(universe, max_expiries=max_exp, r=r, q=q)
+                inserted = ingest_and_process(
+                    universe,
+                    max_expiries=max_exp,
+                    r=r,
+                    q=q,
+                    underlying_lookback_days=underlying_lookback_days,
+                )
+                coverage_report = get_last_coverage_report()
                 # On success, schedule UI updates
                 def done():
-                    messagebox.showinfo("Download complete", f"Ingested rows: {inserted}\nTickers: {', '.join(universe)}")
+                    lines = [
+                        f"Ingested rows: {inserted}",
+                        f"Tickers: {', '.join(universe)}",
+                    ]
+                    if coverage_report:
+                        lines.append("")
+                        lines.append("Coverage report:")
+                        lines.append("ticker | provider | requested | fetched | stored | missing shared")
+                        for row in coverage_report:
+                            lines.append(
+                                f"{row.get('ticker')} | "
+                                f"{len(row.get('provider_expiries') or [])} | "
+                                f"{len(row.get('requested_expiries') or [])} | "
+                                f"{len(row.get('fetched_expiries') or [])} | "
+                                f"{len(row.get('stored_expiries') or [])} | "
+                                f"{', '.join(row.get('missing_shared_expiries') or []) or '-'}"
+                            )
+                    messagebox.showinfo("Download complete", "\n".join(lines))
                     self.status.config(text=f"Downloaded data for {', '.join(universe)}")
                     # Refresh available dates now that new data may be present
                     self._on_target_change()
                     self.inputs.btn_download.config(state=tk.NORMAL)
                 self.after(0, done)
             except Exception as e:
-                def handle():
-                    messagebox.showerror("Download error", str(e))
+                def handle(exc=e):
+                    messagebox.showerror("Download error", str(exc))
                     self.status.config(text="Download failed")
                     self.inputs.btn_download.config(state=tk.NORMAL)
                 self.after(0, handle)

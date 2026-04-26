@@ -46,6 +46,8 @@ from analysis.settings import (
     DEFAULT_FEATURE_MODE,
     DEFAULT_MAX_EXPIRIES,
     DEFAULT_MONEYNESS_BINS,
+    DEFAULT_SMILE_GRID_POINTS,
+    DEFAULT_SMILE_MONEYNESS_RANGE,
     DEFAULT_WEIGHT_METHOD,
     DEFAULT_WEIGHT_POWER,
 )
@@ -69,8 +71,26 @@ from analysis.confidence_bands import (
 # Small local helpers
 # ---------------------------------------------------------------------------
 LOGGER = logging.getLogger(__name__)
-SMILE_MNY_RANGE = (0.7, 1.3)
+SMILE_MNY_RANGE = DEFAULT_SMILE_MONEYNESS_RANGE
 SMILE_RMSE_WARN = 0.05
+
+
+def _smile_mny_range_from_settings(settings: dict | None) -> tuple[float, float]:
+    raw = (settings or {}).get("smile_moneyness_range", DEFAULT_SMILE_MONEYNESS_RANGE)
+    try:
+        lo, hi = raw
+        lo = float(lo)
+        hi = float(hi)
+        if 0.0 < lo < hi and hi < 10.0:
+            return (lo, hi)
+    except Exception:
+        pass
+    return DEFAULT_SMILE_MONEYNESS_RANGE
+
+
+def _smile_grid_from_settings(settings: dict | None) -> tuple[float, float, int]:
+    lo, hi = _smile_mny_range_from_settings(settings)
+    return (lo, hi, DEFAULT_SMILE_GRID_POINTS)
 
 
 def _filter_smile_quotes(
@@ -457,6 +477,7 @@ class PlotManager:
         peers = settings["peers"]
         pillars = settings["pillars"]
         max_expiries = settings.get("max_expiries", DEFAULT_MAX_EXPIRIES)
+        smile_grid = _smile_grid_from_settings(settings)
 
         # invalidate surface cache if tickers or max_expiries changed
         prev = getattr(self, "last_settings", {}) or {}
@@ -512,6 +533,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "overlay_peers": overlay_peers,
                 "max_expiries": max_expiries,
+                "smile_moneyness_range": list(smile_grid[:2]),
                 "v": 3,  # bump to invalidate caches missing peer slices for composite smile
             }
 
@@ -608,6 +630,7 @@ class PlotManager:
                 "weights": weights.to_dict() if weights is not None else None,
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
+                "feature_mode": feature_mode,
 
                 "weight_mode": weight_mode,
             }
@@ -622,6 +645,7 @@ class PlotManager:
                     weights=weights.to_dict() if weights is not None else None,
                     atm_band=atm_band,
                     max_expiries=max_expiries,
+                    feature_mode=feature_mode,
                 )
 
             if hasattr(self, "_warm"):
@@ -762,10 +786,12 @@ class PlotManager:
         K = dfe["K"].to_numpy(float)
         IV = dfe["sigma"].to_numpy(float)
         cp = dfe["call_put"].to_numpy() if "call_put" in dfe.columns else None
-        K_plot, IV_plot, cp_plot, excluded_quotes = _filter_smile_quotes(S, K, IV, cp)
+        smile_grid = _smile_grid_from_settings(getattr(self, "last_settings", {}))
+        smile_mny_range = (smile_grid[0], smile_grid[1])
+        K_plot, IV_plot, cp_plot, excluded_quotes = _filter_smile_quotes(S, K, IV, cp, smile_mny_range)
         T_used = float(dfe["T"].median())
 
-        m_grid = np.linspace(0.7, 1.3, 121)
+        m_grid = np.linspace(smile_grid[0], smile_grid[1], smile_grid[2])
         K_grid = m_grid * S
         svi_params, svi_quality = fit_valid_model_result("svi", S, K_plot, T_used, IV_plot)
         sabr_params, sabr_quality = fit_valid_model_result("sabr", S, K_plot, T_used, IV_plot)
@@ -791,7 +817,7 @@ class PlotManager:
                 model=model,
                 params=fit_params,
                 bands=bands,
-                moneyness_grid=(0.7, 1.3, 121),
+                moneyness_grid=smile_grid,
                 show_points=True,
                 call_put=cp_plot,
                 enable_toggles=False,
@@ -817,7 +843,7 @@ class PlotManager:
                 _status_event(
                     "data_filter",
                     "warning",
-                    f"{excluded_quotes} quotes outside {SMILE_MNY_RANGE[0]:.1f}-{SMILE_MNY_RANGE[1]:.1f} K/S were excluded from the smile fit/display.",
+                    f"{excluded_quotes} quotes outside {smile_mny_range[0]:g}-{smile_mny_range[1]:g} K/S were excluded from the smile fit/display.",
                 )
             )
         selected_quality = quality_map.get(model) or {}
@@ -899,7 +925,7 @@ class PlotManager:
                     w,
                     model=model,
                     target_T=T_used,
-                    moneyness_grid=(0.7, 1.3, 121),
+                    moneyness_grid=smile_grid,
                 )
                 x_mny = composite.get("moneyness", np.array([]))
                 y_syn = composite.get("iv", np.array([]))
@@ -1201,7 +1227,9 @@ class PlotManager:
         IV = sigma_arr[mask]
         cp_arr = self._smile_ctx.get("cp_arr")
         cp = cp_arr[mask] if cp_arr is not None else None
-        K_plot, IV_plot, cp_plot, excluded_quotes = _filter_smile_quotes(S, K, IV, cp)
+        smile_grid = _smile_grid_from_settings(settings)
+        smile_mny_range = (smile_grid[0], smile_grid[1])
+        K_plot, IV_plot, cp_plot, excluded_quotes = _filter_smile_quotes(S, K, IV, cp, smile_mny_range)
 
         fit_map = self._smile_ctx.get("fit_by_expiry", {})
         pre = fit_map.get(T0)
@@ -1215,7 +1243,7 @@ class PlotManager:
                 pre[model] = pre_params
         bands = None
         if pre_params and ci and ci > 0:
-            m_grid = np.linspace(0.7, 1.3, 121)
+            m_grid = np.linspace(smile_grid[0], smile_grid[1], smile_grid[2])
             K_grid = m_grid * S
             if model == "svi":
                 bands = svi_confidence_bands(S, K_plot, T0, IV_plot, K_grid, level=float(ci))
@@ -1234,7 +1262,7 @@ class PlotManager:
                 model=model,
                 params=pre_params,
                 bands=bands,
-                moneyness_grid=(0.7, 1.3, 121),
+                moneyness_grid=smile_grid,
                 show_points=True,
                 call_put=cp_plot,
                 label=f"{target} {model.upper()}",
@@ -1265,7 +1293,7 @@ class PlotManager:
                 _status_event(
                     "data_filter",
                     "warning",
-                    f"{excluded_quotes} quotes outside {SMILE_MNY_RANGE[0]:.1f}-{SMILE_MNY_RANGE[1]:.1f} K/S were excluded from the smile fit/display.",
+                    f"{excluded_quotes} quotes outside {smile_mny_range[0]:g}-{smile_mny_range[1]:g} K/S were excluded from the smile fit/display.",
                     dte=current_dte,
                 )
             )
@@ -1320,7 +1348,7 @@ class PlotManager:
                 weights,
                 model=model,
                 target_T=T0,
-                moneyness_grid=(0.7, 1.3, 121),
+                moneyness_grid=smile_grid,
             )
             x_mny = composite.get("moneyness", np.array([]))
             y_syn = composite.get("iv", np.array([]))
@@ -1356,7 +1384,7 @@ class PlotManager:
                 Sp = float(np.nanmedian(S_p[maskp]))
                 Kp = K_p[maskp]
                 IVp = sigma_p[maskp]
-                Kp_plot, IVp_plot, _, _peer_excluded = _filter_smile_quotes(Sp, Kp, IVp)
+                Kp_plot, IVp_plot, _, _peer_excluded = _filter_smile_quotes(Sp, Kp, IVp, mny_range=smile_mny_range)
                 p_params = fit_valid_model_params(model, Sp, Kp_plot, T0p, IVp_plot)
                 if not p_params:
                     continue
@@ -1368,7 +1396,7 @@ class PlotManager:
                     iv=IVp_plot,
                     model=model,
                     params=p_params,
-                    moneyness_grid=(0.7, 1.3, 121),
+                    moneyness_grid=smile_grid,
                     show_points=False,
                     label=p,
                     line_kwargs={"alpha": 0.7},

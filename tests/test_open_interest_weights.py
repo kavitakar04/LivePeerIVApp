@@ -4,7 +4,7 @@ import pytest
 
 from data.db_utils import ensure_initialized, insert_quotes
 from analysis.unified_weights import compute_unified_weights
-from analysis.analysis_pipeline import compute_peer_weights
+from analysis.weight_service import compute_peer_weights
 
 
 def test_open_interest_weighting(monkeypatch):

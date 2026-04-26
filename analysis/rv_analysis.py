@@ -726,7 +726,7 @@ def compute_skew_spread(
         target_curv, synth_curv, curv_spread
     """
     from analysis.analysis_pipeline import get_smile_slice  # delayed import
-    from analysis.pillars import compute_atm_by_expiry
+    from analysis.atm_extraction import compute_atm_by_expiry
 
     target = target.upper()
     peers = [p.upper() for p in peers]

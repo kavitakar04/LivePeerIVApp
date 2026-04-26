@@ -7,6 +7,7 @@ from analysis.analysis_pipeline import (
     available_tickers,
     get_daily_hv_for_spillover,
     get_daily_iv_for_spillover,
+    get_most_recent_date_global,
     ingest_and_process,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "available_tickers",
     "get_daily_hv_for_spillover",
     "get_daily_iv_for_spillover",
+    "get_most_recent_date_global",
     "ingest_and_process",
 ]

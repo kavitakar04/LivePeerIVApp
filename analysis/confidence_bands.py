@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
+from statistics import NormalDist
 import numpy as np
 
 # We reuse your smile fitters
@@ -12,6 +13,7 @@ from volModel.polyFit import fit_tps_slice, tps_smile_iv
 __all__ = [
     "Bands",
     "bootstrap_bands",
+    "residual_bootstrap_bands",
     "svi_confidence_bands",
     "sabr_confidence_bands",
     "tps_confidence_bands",
@@ -19,6 +21,8 @@ __all__ = [
     "peer_composite_confidence_bands",
     "peer_composite_weight_bands",
     "peer_composite_pillar_bands",
+    "normalize_confidence_level",
+    "confidence_z_score",
 ]
 
 @dataclass
@@ -28,6 +32,22 @@ class Bands:
     lo: np.ndarray
     hi: np.ndarray
     level: float
+
+
+def normalize_confidence_level(level: float) -> float:
+    """Return a confidence level as a decimal strictly between 0 and 1."""
+    level = float(level)
+    if level > 1.0:
+        level /= 100.0
+    if not np.isfinite(level) or level <= 0.0 or level >= 1.0:
+        raise ValueError(f"confidence level must be in (0, 1), got {level!r}")
+    return level
+
+
+def confidence_z_score(level: float) -> float:
+    """Two-sided normal z-score for a confidence level."""
+    level = normalize_confidence_level(level)
+    return float(NormalDist().inv_cdf(0.5 + level / 2.0))
 
 # -----------------------------
 # Generic nonparametric bootstrap bands
@@ -49,6 +69,7 @@ def bootstrap_bands(
     grid: where to compute bands
     level: 0.68 ~ 1 sigma-ish; 0.95 for wide bands
     """
+    level = normalize_confidence_level(level)
     rng = np.random.default_rng(random_state)
     x = np.asarray(x, float)
     y = np.asarray(y, float)
@@ -79,6 +100,60 @@ def bootstrap_bands(
 
     return Bands(x=grid, mean=center, lo=lo, hi=hi, level=level)
 
+
+def residual_bootstrap_bands(
+    x: np.ndarray,
+    y: np.ndarray,
+    fit_fn: Callable[[np.ndarray, np.ndarray], Dict],
+    pred_fn: Callable[[Dict, np.ndarray], np.ndarray],
+    grid: np.ndarray,
+    level: float = 0.68,
+    n_boot: int = 200,
+    random_state: Optional[int] = 42,
+) -> Bands:
+    """
+    Fixed-design residual bootstrap bands for fitted smile curves.
+
+    Strikes/moneyness are the design points for a displayed expiry slice.  The
+    bootstrap therefore resamples centered residuals at the original x-values
+    instead of resampling x/y pairs and changing the strike design.
+    """
+    level = normalize_confidence_level(level)
+    rng = np.random.default_rng(random_state)
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    grid = np.asarray(grid, float)
+
+    mask = np.isfinite(x) & np.isfinite(y)
+    x_fit = x[mask]
+    y_fit = y[mask]
+    if x_fit.size < 3:
+        nan = np.full(grid.shape, np.nan, dtype=float)
+        return Bands(x=grid, mean=nan.copy(), lo=nan.copy(), hi=nan.copy(), level=level)
+
+    p0 = fit_fn(x_fit, y_fit)
+    center = np.asarray(pred_fn(p0, grid), dtype=float)
+    fitted_at_x = np.asarray(pred_fn(p0, x_fit), dtype=float)
+    residuals = y_fit - fitted_at_x
+    residuals = residuals[np.isfinite(residuals)]
+    if residuals.size < 2:
+        return Bands(x=grid, mean=center, lo=center.copy(), hi=center.copy(), level=level)
+    residuals = residuals - float(np.nanmean(residuals))
+
+    draws = np.empty((n_boot, grid.size), dtype=float)
+    for b in range(n_boot):
+        yb = fitted_at_x + rng.choice(residuals, size=x_fit.size, replace=True)
+        try:
+            pb = fit_fn(x_fit, yb)
+            draws[b] = pred_fn(pb, grid)
+        except Exception:
+            draws[b] = np.nan
+
+    alpha = 1.0 - level
+    lo = np.nanquantile(draws, alpha / 2.0, axis=0)
+    hi = np.nanquantile(draws, 1.0 - alpha / 2.0, axis=0)
+    return Bands(x=grid, mean=center, lo=lo, hi=hi, level=level)
+
 # -----------------------------
 # SVI helper bands (expects S,K,T)
 # -----------------------------
@@ -102,7 +177,7 @@ def svi_confidence_bands(
     def _pred(p, Kq):
         return svi_smile_iv(S, np.asarray(Kq, float), T, p)
 
-    return bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+    return residual_bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
 
 # -----------------------------
 # SABR helper bands (expects S,K,T)
@@ -128,7 +203,7 @@ def sabr_confidence_bands(
     def _pred(p, Kq):
         return sabr_smile_iv(S, np.asarray(Kq, float), T, p)
 
-    return bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+    return residual_bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
 
 # -----------------------------
 # TPS helper bands (expects S,K,T)
@@ -152,7 +227,7 @@ def tps_confidence_bands(
     def _pred(p, Kq):
         return tps_smile_iv(S, np.asarray(Kq, float), T, p)
 
-    return bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+    return residual_bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
 
 # -----------------------------
 # Term structure bootstrap helper
@@ -259,6 +334,7 @@ def peer_composite_confidence_bands(
     Bands
         Confidence bands for the peer-composite surface
     """
+    level = normalize_confidence_level(level)
     grid_K = np.asarray(grid_K, float)
     tickers = list(surfaces.keys())
     n_points = len(grid_K)
@@ -343,6 +419,7 @@ def peer_composite_weight_bands(
     dict
         {peer_idx -> Bands} where Bands.mean contains the weight values
     """
+    level = normalize_confidence_level(level)
     n_peers = len(peer_indices)
     rng = np.random.default_rng(42)
     
@@ -428,6 +505,7 @@ def peer_composite_pillar_bands(
     Bands
         Confidence bands for peer-composite ATM curve
     """
+    level = normalize_confidence_level(level)
     pillar_days = np.asarray(pillar_days, float)
     tickers = list(atm_data.keys())
     n_pillars = len(pillar_days)

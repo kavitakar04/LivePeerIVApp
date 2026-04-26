@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 
 from analysis.model_fit_service import fit_valid_model_params, predict_model_iv
+from analysis.settings import DEFAULT_SMILE_GRID_POINTS, DEFAULT_SMILE_MONEYNESS_RANGE
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_SMILE_GRID = (0.7, 1.3, 121)
+DEFAULT_SMILE_GRID = (*DEFAULT_SMILE_MONEYNESS_RANGE, DEFAULT_SMILE_GRID_POINTS)
 
 
 def _slice_to_arrays(data) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
