@@ -8,6 +8,5 @@
 - TTL: `analysis.settings.DEFAULT_CALC_CACHE_TTL_SEC`.
 - Versioning: per-kind versions live in `analysis.cache_io.ARTIFACT_VERSION`.
 
-`analysis.compute_or_load` is now only a compatibility import path that delegates
-to `analysis.cache_io.compute_or_load`. New code should import from
-`analysis.cache_io` directly.
+The legacy `analysis.compute_or_load` compatibility module has been removed.
+New code should import `compute_or_load` from `analysis.cache_io` directly.

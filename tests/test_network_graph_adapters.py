@@ -38,6 +38,8 @@ def test_build_spillover_digraph_filters_and_attrs():
     assert set(G.nodes()) == {"AAPL", "MSFT"}
     assert set(G.edges()) == {("AAPL", "MSFT")}
     assert G["AAPL"]["MSFT"]["weight"] == 0.30
+    assert G["AAPL"]["MSFT"]["abs_weight"] == 0.30
+    assert G["AAPL"]["MSFT"]["distance"] == 1 / 0.30
 
 
 def test_build_corr_graph_signed_weighted_edges():
@@ -51,6 +53,7 @@ def test_build_corr_graph_signed_weighted_edges():
 
     assert set(G.edges()) == {("A", "B"), ("B", "C")}
     assert G["A"]["B"]["weight"] == 0.6
+    assert G["A"]["B"]["distance"] == 1 / 0.6
     assert G["B"]["C"]["sign"] == -1
 
 
@@ -86,3 +89,69 @@ def test_compute_graph_metrics_directed_strengths_present():
     assert {"degree", "in_degree", "out_degree", "out_strength"}.issubset(metrics.columns)
     assert metrics.loc["Y", "in_degree"] == 1.0
     assert metrics.loc["Y", "out_degree"] == 1.0
+
+
+def test_spillover_centrality_uses_magnitude_not_signed_path_weights():
+    summary = pd.DataFrame(
+        [
+            {
+                "ticker": "A",
+                "peer": "B",
+                "h": 1,
+                "n": 20,
+                "hit_rate": 0.5,
+                "sign_concord": 0.8,
+                "median_elasticity": -0.5,
+                "median_resp": -0.03,
+            },
+            {
+                "ticker": "B",
+                "peer": "C",
+                "h": 1,
+                "n": 20,
+                "hit_rate": 0.5,
+                "sign_concord": 0.8,
+                "median_elasticity": 0.25,
+                "median_resp": 0.02,
+            },
+        ]
+    )
+    G = build_spillover_digraph(summary, horizon=1, min_n=1)
+    metrics = compute_graph_metrics(G).set_index("node")
+
+    assert G["A"]["B"]["weight"] == -0.5
+    assert G["A"]["B"]["abs_weight"] == 0.5
+    assert metrics.loc["A", "out_strength"] == 0.5
+    assert metrics.loc["A", "out_signed_strength"] == -0.5
+    assert metrics.loc["B", "betweenness_centrality"] > 0
+
+
+def test_spillover_graph_drops_zero_and_nonfinite_weights():
+    summary = pd.DataFrame(
+        [
+            {
+                "ticker": "A",
+                "peer": "B",
+                "h": 1,
+                "n": 20,
+                "hit_rate": 0.5,
+                "sign_concord": 0.8,
+                "median_elasticity": 0.0,
+                "median_resp": 0.0,
+            },
+            {
+                "ticker": "B",
+                "peer": "C",
+                "h": 1,
+                "n": 20,
+                "hit_rate": 0.5,
+                "sign_concord": 0.8,
+                "median_elasticity": float("nan"),
+                "median_resp": 0.0,
+            },
+        ]
+    )
+
+    G = build_spillover_digraph(summary, horizon=1, min_n=1)
+
+    assert len(G.edges()) == 0

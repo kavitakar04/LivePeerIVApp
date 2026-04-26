@@ -27,11 +27,11 @@ def _safe_float(val) -> float:
 
 def _empty_dashboard() -> dict[str, Any]:
     cols = [
-        "rank", "opportunity", "direction", "feature", "maturity", "spread",
+        "rank", "opportunity", "direction", "metric", "feature", "maturity", "spread",
         "z_score", "percentile", "confidence", "event_context",
         "spillover_support", "data_quality", "why", "what_differs",
         "why_matters", "statistical_read", "comparability", "warnings",
-        "tradeability_score",
+        "tradeability_score", "signal",
     ]
     return {
         "executive_summary": [],
@@ -63,6 +63,32 @@ def _label_feature(signal_type: str) -> str:
     return "Surface"
 
 
+def _metric_family(signal_type: str) -> str:
+    text = str(signal_type or "").lower()
+    if "atm" in text or "level" in text:
+        return "level"
+    if "slope" in text or "term" in text or text.startswith("ts"):
+        return "slope"
+    if "skew" in text:
+        return "asymmetry"
+    if "curv" in text:
+        return "convexity"
+    if "event" in text or "bump" in text:
+        return "timing"
+    return "level"
+
+
+def _metric_label(metric_family: str) -> str:
+    labels = {
+        "level": "Vol level",
+        "slope": "Term structure",
+        "asymmetry": "Smile asymmetry",
+        "convexity": "Smile convexity",
+        "timing": "Event timing",
+    }
+    return labels.get(metric_family, "Vol surface")
+
+
 def _direction_from_spread(spread: float, eps: float = 1e-8) -> str:
     if not np.isfinite(spread) or abs(spread) <= eps:
         return "Neutral"
@@ -82,16 +108,122 @@ def _fmt_signed_pct(value: float) -> str:
     return f"{value:+.2%}"
 
 
-def _confidence_label(z: float, percentile: float, spillover_label: str, data_quality: str) -> tuple[str, float]:
+def _fmt_metric_value(metric_family: str, value: float, *, signed: bool = False) -> str:
+    if not np.isfinite(value):
+        return "n/a"
+    family = str(metric_family)
+    if family in {"level", "timing"}:
+        return f"{value:+.2%}" if signed else f"{value:.2%}"
+    sign = "+" if signed else ""
+    return f"{value:{sign}.4f}"
+
+
+def _calculation_details(
+    *,
+    target: str,
+    metric: str,
+    metric_family: str,
+    target_value: float,
+    synthetic_value: float,
+    spread: float,
+    direction: str,
+    reference_label: str = "Weighted peer synthetic",
+) -> dict[str, Any]:
+    value_unit = "IV" if metric_family in {"level", "timing"} else "fit coefficient"
+    reference_text = str(reference_label or "Weighted peer synthetic")
+    reference_formula = "weighted peer" if reference_text == "Weighted peer synthetic" else reference_text.lower()
+    level_reference_formula = (
+        "weighted peer synthetic"
+        if reference_text == "Weighted peer synthetic"
+        else reference_text.lower()
+    )
+    formula = f"spread = target value - {level_reference_formula} value"
+    if metric_family == "convexity":
+        formula = f"convexity spread = target smile curvature - {reference_formula} smile curvature"
+    elif metric_family == "asymmetry":
+        formula = f"asymmetry spread = target smile skew - {reference_formula} smile skew"
+    elif metric_family == "slope":
+        formula = f"term spread = target term-structure coefficient - {reference_formula} term-structure coefficient"
+    return {
+        "metric": metric,
+        "unit": value_unit,
+        "target_label": f"{target} {metric.lower()}",
+        "target_value": target_value,
+        "synthetic_label": reference_text,
+        "synthetic_value": synthetic_value,
+        "spread": spread,
+        "direction": direction,
+        "formula": formula,
+        "display": (
+            f"{formula}: "
+            f"{_fmt_metric_value(metric_family, spread, signed=True)} = "
+            f"{_fmt_metric_value(metric_family, target_value)} - "
+            f"{_fmt_metric_value(metric_family, synthetic_value)}"
+        ),
+    }
+
+
+def _alignment_score(comparability: str, surface_meta: Mapping[str, Any] | None = None) -> float:
+    meta = dict(surface_meta or {})
+    corr = _safe_float(meta.get("avg_surface_corr"))
+    if np.isfinite(corr):
+        return float(np.clip((corr + 1.0) / 2.0, 0.0, 1.0))
+    return {
+        "Comparable": 0.85,
+        "Mixed": 0.55,
+        "Poor": 0.20,
+        "Unknown": 0.35,
+    }.get(str(comparability), 0.35)
+
+
+def _spillover_score(spill_meta: Mapping[str, Any] | None, spillover_label: str) -> float:
+    meta = dict(spill_meta or {})
+    hit = _safe_float(meta.get("hit_rate"))
+    same = _safe_float(meta.get("same_direction_probability"))
+    parts = [v for v in (hit, same) if np.isfinite(v)]
+    if parts:
+        return float(np.clip(np.mean(parts), 0.0, 1.0))
+    if "Strong" in spillover_label:
+        return 0.80
+    if "Suggestive" in spillover_label:
+        return 0.65
+    if "Weak" in spillover_label:
+        return 0.35
+    return 0.25
+
+
+def _data_quality_score(data_quality: str) -> float:
+    return {
+        "Good": 1.0,
+        "Acceptable": 0.75,
+        "Unknown": 0.45,
+        "Degraded": 0.25,
+        "Poor": 0.10,
+    }.get(str(data_quality), 0.45)
+
+
+def _confidence_label(
+    z: float,
+    percentile: float,
+    spillover_label: str,
+    data_quality: str,
+    *,
+    alignment: float = 0.50,
+    spillover_strength: float | None = None,
+) -> tuple[str, float]:
     z_abs = abs(z) if np.isfinite(z) else 0.0
     pct_edge = abs(percentile - 50.0) / 50.0 if np.isfinite(percentile) else 0.0
-    score = min(1.0, 0.55 * min(z_abs / 3.0, 1.0) + 0.25 * pct_edge)
-    if "Strong" in spillover_label or "Suggestive" in spillover_label:
-        score += 0.15
-    if data_quality in {"Good", "Acceptable"}:
-        score += 0.10
-    if data_quality in {"Degraded", "Poor"}:
-        score -= 0.25
+    statistical = min(1.0, 0.75 * min(z_abs / 3.0, 1.0) + 0.25 * pct_edge)
+    if not np.isfinite(z):
+        statistical = min(0.45, abs(pct_edge))
+    spill = _spillover_score({}, spillover_label) if spillover_strength is None else spillover_strength
+    quality = _data_quality_score(data_quality)
+    score = 0.42 * statistical + 0.24 * float(np.clip(alignment, 0.0, 1.0))
+    score += 0.18 * float(np.clip(spill, 0.0, 1.0)) + 0.16 * quality
+    if quality <= 0.25:
+        score *= 0.65
+    if alignment < 0.35:
+        score *= 0.75
     score = float(np.clip(score, 0.0, 1.0))
     if score >= 0.75:
         return "High", score
@@ -108,7 +240,7 @@ def _load_model_quality(target: str, peers: list[str], asof: str | None) -> tupl
 
         df = load_model_params()
     except Exception as exc:
-        return "Unknown", [f"Model parameter log unavailable: {exc}"], meta
+        return "Unknown", ["Model parameter log is unavailable."], meta
 
     if df is None or df.empty:
         return "Unknown", ["No logged model-fit parameters available."], meta
@@ -205,6 +337,141 @@ def _load_spillover_support(target: str, peers: list[str]) -> tuple[str, dict[st
     return label, meta, []
 
 
+def _load_supporting_contracts(
+    target: str,
+    asof: str | None,
+    maturity_days: Any,
+    metric_family: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Return real option quotes that ground a synthesized signal."""
+    try:
+        from data.db_utils import get_conn
+
+        conn = get_conn()
+    except Exception:
+        return []
+
+    asof_filter = asof
+    if not asof_filter:
+        try:
+            row = conn.execute(
+                "SELECT MAX(asof_date) FROM options_quotes WHERE ticker = ?",
+                (target,),
+            ).fetchone()
+            asof_filter = row[0] if row and row[0] else None
+        except Exception:
+            asof_filter = None
+    if not asof_filter:
+        return []
+
+    maturity = _safe_float(maturity_days)
+    clauses = ["ticker = ?", "asof_date = ?", "iv IS NOT NULL", "spot IS NOT NULL", "strike IS NOT NULL"]
+    params: list[Any] = [target.upper(), asof_filter]
+    if np.isfinite(maturity) and maturity > 0:
+        clauses.append("ABS(ttm_years * 365.25 - ?) <= ?")
+        params.extend([float(maturity), max(10.0, float(maturity) * 0.35)])
+
+    family = str(metric_family)
+    if family == "level":
+        clauses.append("moneyness BETWEEN 0.95 AND 1.05")
+    elif family == "asymmetry":
+        clauses.append("((call_put = 'P' AND moneyness BETWEEN 0.85 AND 1.00) OR (call_put = 'C' AND moneyness BETWEEN 1.00 AND 1.15))")
+    elif family == "convexity":
+        clauses.append("(moneyness BETWEEN 0.75 AND 0.90 OR moneyness BETWEEN 1.10 AND 1.30)")
+    elif family == "timing":
+        clauses.append("moneyness BETWEEN 0.90 AND 1.10")
+    elif family == "slope":
+        clauses.append("moneyness BETWEEN 0.95 AND 1.05")
+
+    sql = (
+        "SELECT expiry, strike, moneyness, call_put, iv, bid, ask, volume, open_interest, ttm_years "
+        "FROM options_quotes WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY ABS(moneyness - 1.0), volume DESC, open_interest DESC LIMIT ?"
+    )
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(sql, conn, params=params)
+    except Exception:
+        return []
+    if df.empty:
+        return []
+
+    contracts: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        contracts.append({
+            "expiry": str(row.get("expiry", "")),
+            "strike": _safe_float(row.get("strike")),
+            "moneyness": _safe_float(row.get("moneyness")),
+            "call_put": str(row.get("call_put", "")),
+            "iv": _safe_float(row.get("iv")),
+            "bid": _safe_float(row.get("bid")),
+            "ask": _safe_float(row.get("ask")),
+            "volume": _safe_float(row.get("volume")),
+            "open_interest": _safe_float(row.get("open_interest")),
+            "ttm_days": _safe_float(row.get("ttm_years")) * 365.25,
+        })
+    return contracts
+
+
+def _contract_summary(target: str, contracts: list[dict[str, Any]], metric_family: str) -> str:
+    if not contracts:
+        return "No contract-level quotes were available for this signal."
+    expiries = sorted({c.get("expiry") for c in contracts if c.get("expiry")})
+    cp = sorted({c.get("call_put") for c in contracts if c.get("call_put")})
+    mnys = [_safe_float(c.get("moneyness")) for c in contracts]
+    mnys = [m for m in mnys if np.isfinite(m)]
+    expiry = expiries[0] if len(expiries) == 1 else f"{len(expiries)} expiries"
+    side = "puts/calls" if len(cp) > 1 else ("puts" if cp == ["P"] else "calls" if cp == ["C"] else "options")
+    if mnys:
+        return f"{target} {expiry} {side} around {min(mnys):.2f}-{max(mnys):.2f} K/S anchor this {metric_family} signal."
+    return f"{target} {expiry} {side} anchor this {metric_family} signal."
+
+
+def _build_narrative(
+    *,
+    target: str,
+    metric_family: str,
+    direction: str,
+    maturity: str,
+    context: str,
+    dynamics: str,
+    data_quality: str,
+    contracts: list[dict[str, Any]],
+) -> dict[str, str]:
+    rich = direction == "Rich"
+    family_text = {
+        "level": "overall implied volatility",
+        "slope": "the term structure",
+        "asymmetry": "the smile asymmetry",
+        "convexity": "smile convexity",
+        "timing": "risk timing",
+    }.get(metric_family, "the volatility surface")
+    if metric_family == "asymmetry":
+        what = "Downside/upside protection is priced higher than peers" if rich else "Downside/upside protection is priced lower than peers"
+    elif metric_family == "convexity":
+        what = "Extreme-outcome options are priced higher than peers" if rich else "Extreme-outcome options are priced lower than peers"
+    elif metric_family == "timing":
+        what = "Risk is concentrated in a specific expiry versus peers" if rich else "Event-timing premium is lower than peers"
+    elif metric_family == "slope":
+        what = "The maturity profile is steeper/richer than peers" if rich else "The maturity profile is flatter/cheaper than peers"
+    else:
+        what = "Implied volatility is priced higher than peers" if rich else "Implied volatility is priced lower than peers"
+
+    return {
+        "headline": f"{target} {maturity} {family_text} is {direction.lower()} vs peers.",
+        "what_differs": what,
+        "why_matters": (
+            "The signal is more tradeable when the dislocation is statistically unusual, "
+            "the peer surface comparison is structurally aligned, and supporting contracts are liquid enough to audit."
+        ),
+        "context": f"Context reads {context.lower()}; dynamics read {dynamics.lower()}; data quality is {data_quality.lower()}.",
+        "contracts": _contract_summary(target, contracts, metric_family),
+    }
+
+
 def _surface_comparability(target: str, peers: list[str], asof: str | None, max_expiries: int) -> tuple[str, dict[str, Any], list[str]]:
     warnings: list[str] = []
     try:
@@ -297,6 +564,32 @@ def _event_context(target: str, peers: list[str], asof: str | None, lookback: in
     if 0.40 <= same_share < 0.70:
         return "Cluster", meta, []
     return "Idiosyncratic", meta, []
+
+
+def _feature_health_context(
+    target: str,
+    peers: list[str],
+    asof: str | None,
+    weight_mode: str,
+    max_expiries: int,
+) -> tuple[dict[str, Any], list[str]]:
+    try:
+        from analysis.feature_health import build_feature_construction_result
+
+        result = build_feature_construction_result(
+            target=target,
+            peers=peers,
+            weight_mode=weight_mode,
+            asof=asof,
+            max_expiries=max_expiries,
+        )
+        health = result.feature_health
+    except Exception as exc:
+        return {}, [f"Feature Health unavailable: {exc}"]
+    warnings = [str(w) for w in health.get("warnings") or []]
+    if warnings:
+        warnings = [f"Feature Health: {w}" for w in warnings]
+    return health, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -612,6 +905,14 @@ def compute_term_shape_dislocation(
     }
 
 
+def _reference_label_from_signal(row: Mapping[str, Any]) -> str:
+    comparison = str(row.get("comparison", "synthetic") or "synthetic")
+    peer = str(row.get("peer", "") or "").upper()
+    if comparison == "peer" and peer:
+        return f"Actual peer {peer}"
+    return "Weighted peer synthetic"
+
+
 # ---------------------------------------------------------------------------
 # Phase 4 — Ranked RV signals
 # ---------------------------------------------------------------------------
@@ -656,10 +957,12 @@ def generate_rv_signals(
     -------
     DataFrame with columns:
         signal_type, asof_date, T_days, value, synth_value,
-        spread, z_score, pct_rank, description
+        spread, z_score, pct_rank, description, comparison, peer, reference_label
     Sorted descending by |z_score| (NaN z-score signals come last).
     """
     from analysis.analysis_pipeline import (  # delayed to avoid circular import
+        _fetch_target_atm,
+        _rv_metrics_join,
         compute_peer_weights,
         get_most_recent_date_global,
         relative_value_atm_report_corrweighted,
@@ -674,6 +977,7 @@ def generate_rv_signals(
         return pd.DataFrame(columns=[
             "signal_type", "asof_date", "T_days", "value", "synth_value",
             "spread", "z_score", "pct_rank", "description",
+            "comparison", "peer", "reference_label",
         ])
 
     # Compute weights
@@ -716,9 +1020,47 @@ def generate_rv_signals(
                     "z_score": z_f,
                     "pct_rank": _safe_float(pct),
                     "description": f"{target} ATM vol vs synthetic at {T_days}d",
+                    "comparison": "synthetic",
+                    "peer": "",
+                    "reference_label": "Weighted peer synthetic",
                 })
     except Exception:
         pass
+
+    # ---- 1b. ATM level versus each actual peer ----
+    for peer in peers:
+        try:
+            tgt_iv = _fetch_target_atm(target, pillar_days=[7, 14, 30, 60, 90])
+            peer_iv = _fetch_target_atm(peer, pillar_days=[7, 14, 30, 60, 90])
+            peer_rv = _rv_metrics_join(tgt_iv, peer_iv, lookback=lookback)
+            if peer_rv.empty:
+                continue
+            latest = peer_rv.sort_values("asof_date").groupby("pillar_days").tail(1)
+            for _, row in latest.iterrows():
+                z_f = _safe_float(row.get("z", np.nan))
+                if not np.isfinite(z_f):
+                    continue
+                spread_v = row.get("spread", np.nan)
+                iv_tgt = row.get("iv_target", np.nan)
+                iv_peer = row.get("iv_synth", np.nan)
+                pct = row.get("pct_rank", np.nan)
+                T_days = int(row.get("pillar_days", 0))
+                signals.append({
+                    "signal_type": "ATM Level",
+                    "asof_date": str(row.get("asof_date", asof)),
+                    "T_days": T_days,
+                    "value": _safe_float(iv_tgt),
+                    "synth_value": _safe_float(iv_peer),
+                    "spread": _safe_float(spread_v),
+                    "z_score": z_f,
+                    "pct_rank": _safe_float(pct),
+                    "description": f"{target} ATM vol vs actual peer {peer} at {T_days}d",
+                    "comparison": "peer",
+                    "peer": peer,
+                    "reference_label": f"Actual peer {peer}",
+                })
+        except Exception:
+            continue
 
     # ---- 2. Skew and curvature ----
     try:
@@ -745,9 +1087,46 @@ def generate_rv_signals(
                         "z_score": np.nan,
                         "pct_rank": np.nan,
                         "description": f"{target} {desc_suffix} vs synthetic at {T_days}d",
+                        "comparison": "synthetic",
+                        "peer": "",
+                        "reference_label": "Weighted peer synthetic",
                     })
     except Exception:
         pass
+
+    # ---- 2b. Skew and curvature versus each actual peer ----
+    for peer in peers:
+        try:
+            peer_skew_df = compute_skew_spread(
+                target, [peer], asof, weights={peer: 1.0}, max_expiries=max_expiries
+            )
+            if peer_skew_df.empty:
+                continue
+            for _, row in peer_skew_df.iterrows():
+                T_days = int(row.get("T_days", int(round(row.get("T", 0) * 365.25))))
+                for sig_type, (tgt_col, syn_col, spread_col, desc_suffix) in {
+                    "Skew": ("target_skew", "synth_skew", "skew_spread", "put/call skew"),
+                    "Curvature": ("target_curv", "synth_curv", "curv_spread", "vol curvature"),
+                }.items():
+                    s_f = _safe_float(row.get(spread_col, np.nan))
+                    if not np.isfinite(s_f):
+                        continue
+                    signals.append({
+                        "signal_type": sig_type,
+                        "asof_date": asof,
+                        "T_days": T_days,
+                        "value": _safe_float(row.get(tgt_col, np.nan)),
+                        "synth_value": _safe_float(row.get(syn_col, np.nan)),
+                        "spread": s_f,
+                        "z_score": np.nan,
+                        "pct_rank": np.nan,
+                        "description": f"{target} {desc_suffix} vs actual peer {peer} at {T_days}d",
+                        "comparison": "peer",
+                        "peer": peer,
+                        "reference_label": f"Actual peer {peer}",
+                    })
+        except Exception:
+            continue
 
     # ---- 3. Term structure shape ----
     try:
@@ -774,6 +1153,9 @@ def generate_rv_signals(
                     "z_score": np.nan,
                     "pct_rank": np.nan,
                     "description": desc,
+                    "comparison": "synthetic",
+                    "peer": "",
+                    "reference_label": "Weighted peer synthetic",
                 })
             bump = shape.get("max_event_bump", np.nan)
             bump_T = shape.get("event_bump_T_days", np.nan)
@@ -789,14 +1171,70 @@ def generate_rv_signals(
                     "z_score": np.nan,
                     "pct_rank": np.nan,
                     "description": f"{target} event-vol bump vs synthetic at {T_label}d",
+                    "comparison": "synthetic",
+                    "peer": "",
+                    "reference_label": "Weighted peer synthetic",
                 })
     except Exception:
         pass
+
+    # ---- 3b. Term structure shape versus each actual peer ----
+    for peer in peers:
+        try:
+            shape = compute_term_shape_dislocation(
+                target, [peer], asof, weights={peer: 1.0}, max_expiries=max_expiries
+            )
+            if not shape:
+                continue
+            for sig_type, val_key, syn_key, spread_key, desc in [
+                ("TS Level", "target_level", "synth_level", "level_spread",
+                 f"{target} term-structure level vs actual peer {peer}"),
+                ("TS Slope", "target_slope", "synth_slope", "slope_spread",
+                 f"{target} term-structure slope vs actual peer {peer}"),
+            ]:
+                sv = shape.get(spread_key, np.nan)
+                if not np.isfinite(sv):
+                    continue
+                signals.append({
+                    "signal_type": sig_type,
+                    "asof_date": asof,
+                    "T_days": 0,
+                    "value": float(shape.get(val_key, np.nan)),
+                    "synth_value": float(shape.get(syn_key, np.nan)),
+                    "spread": float(sv),
+                    "z_score": np.nan,
+                    "pct_rank": np.nan,
+                    "description": desc,
+                    "comparison": "peer",
+                    "peer": peer,
+                    "reference_label": f"Actual peer {peer}",
+                })
+            bump = shape.get("max_event_bump", np.nan)
+            bump_T = shape.get("event_bump_T_days", np.nan)
+            if np.isfinite(bump) and bump > 0:
+                T_label = int(bump_T) if np.isfinite(bump_T) else "?"
+                signals.append({
+                    "signal_type": "Event Bump",
+                    "asof_date": asof,
+                    "T_days": int(bump_T) if np.isfinite(bump_T) else 0,
+                    "value": float(bump),
+                    "synth_value": 0.0,
+                    "spread": float(bump),
+                    "z_score": np.nan,
+                    "pct_rank": np.nan,
+                    "description": f"{target} event-vol bump vs actual peer {peer} at {T_label}d",
+                    "comparison": "peer",
+                    "peer": peer,
+                    "reference_label": f"Actual peer {peer}",
+                })
+        except Exception:
+            continue
 
     if not signals:
         return pd.DataFrame(columns=[
             "signal_type", "asof_date", "T_days", "value", "synth_value",
             "spread", "z_score", "pct_rank", "description",
+            "comparison", "peer", "reference_label",
         ])
 
     df = pd.DataFrame(signals)
@@ -862,12 +1300,21 @@ def generate_rv_opportunity_dashboard(
     spill_label, spill_meta, spill_warnings = _load_spillover_support(target, peer_list)
     comparability, surface_meta, surface_warnings = _surface_comparability(target, peer_list, asof, max_expiries)
     event_ctx, event_meta, event_warnings = _event_context(target, peer_list, asof, lookback)
+    feature_health, feature_warnings = _feature_health_context(target, peer_list, asof, weight_mode, max_expiries)
+    alignment = _alignment_score(comparability, surface_meta)
+    spill_score = _spillover_score(spill_meta, spill_label)
 
-    warnings = model_warnings + spill_warnings + surface_warnings + event_warnings
+    warnings = model_warnings + spill_warnings + surface_warnings + event_warnings + feature_warnings
     dashboard["warnings"] = warnings
     dashboard["integration_status"] = {
         "model_quality": data_quality,
         "model_meta": model_meta,
+        "system_health": {
+            "quality": data_quality,
+            "warnings": model_warnings + surface_warnings + feature_warnings,
+            "confidence_input": "RV confidence is penalized when System Health reports degraded fits, weak structural comparability, or fallbacks.",
+        },
+        "feature_health": feature_health,
         "spillover": spill_meta,
         "surface_comparability": surface_meta,
         "event_context": event_meta,
@@ -886,19 +1333,69 @@ def generate_rv_opportunity_dashboard(
     for _, row in raw.iterrows():
         signal_type = str(row.get("signal_type", "Signal"))
         feature = _label_feature(signal_type)
+        metric_family = _metric_family(signal_type)
+        metric = _metric_label(metric_family)
         spread = _safe_float(row.get("spread"))
         z = _safe_float(row.get("z_score"))
         pct = _safe_float(row.get("pct_rank"))
         direction = _direction_from_spread(spread)
         maturity = _format_maturity(row.get("T_days"))
-        confidence, confidence_score = _confidence_label(z, pct, spill_label, data_quality)
+        target_value = _safe_float(row.get("value"))
+        synthetic_value = _safe_float(row.get("synth_value"))
+        reference_label = str(row.get("reference_label") or _reference_label_from_signal(row))
+        comparison = str(row.get("comparison", "synthetic") or "synthetic")
+        peer = str(row.get("peer", "") or "").upper()
+        calculation = _calculation_details(
+            target=target,
+            metric=metric,
+            metric_family=metric_family,
+            target_value=target_value,
+            synthetic_value=synthetic_value,
+            spread=spread,
+            direction=direction,
+            reference_label=reference_label,
+        )
+        confidence, confidence_score = _confidence_label(
+            z,
+            pct,
+            spill_label,
+            data_quality,
+            alignment=alignment,
+            spillover_strength=spill_score,
+        )
+        if feature_warnings:
+            confidence_score = float(np.clip(confidence_score * 0.80, 0.0, 1.0))
+            if confidence_score >= 0.75:
+                confidence = "High"
+            elif confidence_score >= 0.45:
+                confidence = "Medium"
+            else:
+                confidence = "Low"
         stat = (
             f"Z-score {z:+.2f}; percentile {pct:.0f}."
             if np.isfinite(z)
             else "No historical z-score is available for this feature; rank uses current spread magnitude."
         )
-        opportunity = f"{target} {maturity} {feature} {direction.lower()} vs peers"
-        why = f"{feature} spread is {_fmt_signed_pct(spread)} versus the weighted peer synthetic."
+        supporting_contracts = _load_supporting_contracts(
+            target,
+            asof,
+            row.get("T_days"),
+            metric_family,
+        )
+        narrative = _build_narrative(
+            target=target,
+            metric_family=metric_family,
+            direction=direction,
+            maturity=maturity,
+            context=event_ctx,
+            dynamics=spill_label,
+            data_quality=data_quality,
+            contracts=supporting_contracts,
+        )
+        opportunity = narrative["headline"]
+        if comparison == "peer" and peer:
+            opportunity = opportunity.replace("vs peers.", f"vs {peer}.")
+        why = f"{metric} spread is {_fmt_signed_pct(spread)} versus {reference_label}."
         if np.isfinite(z) and abs(z) >= 2.0:
             why = f"{why} The move is statistically unusual."
         elif np.isfinite(z):
@@ -927,10 +1424,63 @@ def generate_rv_opportunity_dashboard(
             tradeability -= 0.20
         tradeability = float(np.clip(tradeability, 0.0, 1.0))
 
+        signal_obj = {
+            "location": {
+                "metric_family": metric_family,
+                "maturity": maturity,
+                "T_days": _safe_float(row.get("T_days")),
+            },
+            "magnitude": {
+                "spread": spread,
+                "direction": direction,
+                "target_value": target_value,
+                "synthetic_value": synthetic_value,
+                "reference_label": reference_label,
+                "comparison": comparison,
+                "peer": peer,
+            },
+            "calculation": calculation,
+            "significance": {
+                "z_score": z,
+                "percentile": pct,
+            },
+            "structure": {
+                "surface_vs_surface_grid_consistency": comparability,
+                "similarity_score": alignment,
+                "feature_health": feature_health,
+                "details": surface_meta,
+            },
+            "context": {
+                "classification": event_ctx,
+                "peer_dispersion": _safe_float(event_meta.get("peer_abs_median_move")) if isinstance(event_meta, dict) else np.nan,
+                "details": event_meta,
+            },
+            "dynamics": {
+                "spillover_strength": spill_meta.get("strength", spill_label) if isinstance(spill_meta, dict) else spill_label,
+                "same_direction_probability": _safe_float(spill_meta.get("same_direction_probability")) if isinstance(spill_meta, dict) else np.nan,
+                "hit_rate": _safe_float(spill_meta.get("hit_rate")) if isinstance(spill_meta, dict) else np.nan,
+                "lag_profile": "h=1" if isinstance(spill_meta, dict) and spill_meta.get("rows") else "unavailable",
+                "label": spill_label,
+            },
+            "data_quality": {
+                "fit_quality": data_quality,
+                "rmse": _safe_float(model_meta.get("rmse_max")) if isinstance(model_meta, dict) else np.nan,
+                "degraded": data_quality in {"Degraded", "Poor"},
+                "coverage": surface_meta.get("avg_common_cells") if isinstance(surface_meta, dict) else np.nan,
+                "system_health_warnings": model_warnings + surface_warnings,
+                "feature_health_warnings": feature_warnings,
+                "details": model_meta,
+            },
+            "supporting_contracts": supporting_contracts,
+            "narrative": narrative,
+            "confidence_score": confidence_score,
+        }
+
         rows.append({
             "rank": 0,
             "opportunity": opportunity,
             "direction": direction,
+            "metric": metric,
             "feature": feature,
             "maturity": maturity,
             "spread": spread,
@@ -942,18 +1492,16 @@ def generate_rv_opportunity_dashboard(
             "data_quality": data_quality,
             "why": why,
             "what_differs": (
-                f"{target} {feature.lower()} is {_fmt_signed_pct(spread)} "
+                f"{target} {metric.lower()} is {_fmt_signed_pct(spread)} "
                 f"{'above' if spread > 0 else 'below' if spread < 0 else 'in line with'} "
-                "the weighted peer synthetic."
+                f"{reference_label}."
             ),
-            "why_matters": (
-                "This is the surface feature most directly tied to the thesis; "
-                "rich readings suggest sale/relative-short-vol candidates, while cheap readings suggest ownership/relative-long-vol candidates."
-            ),
+            "why_matters": narrative["why_matters"],
             "statistical_read": stat,
-            "comparability": f"{comparability} surface match",
+            "comparability": f"{comparability} surface match; similarity score {alignment:.2f}",
             "warnings": "; ".join(dict.fromkeys(row_warnings)) if row_warnings else "",
             "tradeability_score": tradeability,
+            "signal": signal_obj,
         })
 
     opp = pd.DataFrame(rows)
@@ -980,9 +1528,7 @@ def generate_rv_opportunity_dashboard(
     summary: list[str] = []
     for _, r in opp.head(3).iterrows():
         z_text = f" z={float(r['z_score']):+.1f}" if np.isfinite(_safe_float(r["z_score"])) else ""
-        summary.append(
-            f"{r['opportunity']} with {str(r['confidence']).lower()} confidence{z_text}."
-        )
+        summary.append(f"{r['opportunity']} Confidence is {str(r['confidence']).lower()}{z_text}.")
     if event_ctx == "Systemic":
         summary.append("Latest ATM move appears sector-wide, so idiosyncratic RV conviction is lower.")
     elif event_ctx == "Idiosyncratic":

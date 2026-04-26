@@ -25,16 +25,16 @@ from analysis.data_availability_service import available_tickers, available_date
 from display.gui.gui_input import InputPanel
 from display.gui.gui_plot_manager import PlotManager, plot_id
 from display.gui.spillover_gui import SpilloverFrame
-from display.gui.parameters_tab import DiagnosticsTab, ParametersTab
+from display.gui.parameters_tab import ParametersTab, SystemHealthTab
 from display.gui.rv_signals_tab import RVSignalsFrame
 
 
 BROWSER_TAB_LABELS = (
     "IV Explorer",
-    "Settings / Status",
     "Parameter Summary",
     "Spillover",
     "RV Signals",
+    "Settings / Data & Model Health",
 )
 
 
@@ -55,15 +55,10 @@ class BrowserApp(tk.Tk):
         # Clarify purpose: this tab lets users explore IV surfaces
         self.notebook.add(self.tab_browser, text=BROWSER_TAB_LABELS[0])
 
-        # ---- Settings / Status tab ----
-        self.tab_settings = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_settings, text=BROWSER_TAB_LABELS[1])
-
-        self.settings_controls = ttk.Frame(self.tab_settings)
+        # ---- Settings / system health tab ----
+        self.tab_status = ttk.Frame(self.notebook)
+        self.settings_controls = ttk.Frame(self.tab_status)
         self.settings_controls.pack(side=tk.TOP, fill=tk.X)
-
-        status_frame = ttk.LabelFrame(self.tab_settings, text="Data Integrity / Model Diagnostics")
-        status_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         # Inputs
         self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
@@ -75,37 +70,14 @@ class BrowserApp(tk.Tk):
         self.inputs.bind_plot(self._refresh_plot)
         self.inputs.bind_target_change(self._on_target_change)
 
-        # Expiry navigation and animation controls
+        # Expiry navigation controls
         nav = ttk.Frame(self.tab_browser)
         nav.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
 
-        # Expiry navigation (existing)
         self.btn_prev = ttk.Button(nav, text="Prev Expiry", command=self._prev_expiry)
         self.btn_prev.pack(side=tk.LEFT, padx=4)
         self.btn_next = ttk.Button(nav, text="Next Expiry", command=self._next_expiry)
         self.btn_next.pack(side=tk.LEFT, padx=4)
-
-        # Animation controls (new)
-        ttk.Separator(nav, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-
-        self.var_animated = tk.BooleanVar(value=False)
-        self.chk_animated = ttk.Checkbutton(nav, text="Animate", variable=self.var_animated,
-                                            command=self._toggle_animation_mode)
-        self.chk_animated.pack(side=tk.LEFT, padx=4)
-
-        self.btn_play_pause = ttk.Button(nav, text="Play", command=self._toggle_animation)
-        self.btn_play_pause.pack(side=tk.LEFT, padx=2)
-
-        self.btn_stop = ttk.Button(nav, text="Stop", command=self._stop_animation)
-        self.btn_stop.pack(side=tk.LEFT, padx=2)
-
-        ttk.Label(nav, text="Speed:").pack(side=tk.LEFT, padx=(8, 2))
-        self.speed_var = tk.IntVar(value=500)  # Default speed
-        self.speed_scale = ttk.Scale(nav, from_=100, to=2000, variable=self.speed_var,
-                                     orient=tk.HORIZONTAL, length=100,
-                                     command=self._on_speed_change)
-        self.speed_scale.pack(side=tk.LEFT, padx=2)
-
 
         # Description bar — plain-English context for the current plot
         self.lbl_desc = ttk.Label(
@@ -124,25 +96,33 @@ class BrowserApp(tk.Tk):
         self.plot_mgr = PlotManager()
         self.plot_mgr.attach_canvas(self.canvas)
 
-        # ---- Status diagnostics table ----
-        self.tab_diagnostics = DiagnosticsTab(status_frame)
-        self.tab_diagnostics.pack(fill=tk.BOTH, expand=True)
+        # ---- System integrity dashboard ----
+        self.tab_health = SystemHealthTab(
+            self.tab_status,
+            on_open_expiry=self._open_health_expiry,
+            on_open_signals=self._open_health_signals,
+        )
+        self.tab_health.pack(fill=tk.BOTH, expand=True)
 
         # ---- Parameter summary tab ----
         self.tab_params = ParametersTab(self.notebook)
-        self.notebook.add(self.tab_params, text=BROWSER_TAB_LABELS[2])
+        self.notebook.add(self.tab_params, text=BROWSER_TAB_LABELS[1])
 
         # ---- Spillover tab ----
         self.tab_spillover = SpilloverFrame(self.notebook, input_panel=self.inputs)
-        self.notebook.add(self.tab_spillover, text=BROWSER_TAB_LABELS[3])
+        self.notebook.add(self.tab_spillover, text=BROWSER_TAB_LABELS[2])
 
         # ---- RV Signals tab ----
         self.tab_rv_signals = RVSignalsFrame(self.notebook, input_panel=self.inputs)
-        self.notebook.add(self.tab_rv_signals, text=BROWSER_TAB_LABELS[4])
+        self.notebook.add(self.tab_rv_signals, text=BROWSER_TAB_LABELS[3])
+
+        # ---- Settings / system health tab ----
+        self.notebook.add(self.tab_status, text=BROWSER_TAB_LABELS[4])
 
         # Status bar for user feedback
         self.status = ttk.Label(self, text="Ready", anchor="w")
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Default target suggestion
         tickers = self._load_tickers()
@@ -152,7 +132,6 @@ class BrowserApp(tk.Tk):
             self._on_target_change()
 
         self._update_nav_buttons()
-        self._update_animation_buttons()
 
 
     # ---------- events ----------
@@ -267,49 +246,22 @@ class BrowserApp(tk.Tk):
 
         def worker():
             try:
-                want_anim = (
-                    self.var_animated.get()
-                    and self.plot_mgr.has_animation_support(plot_id(settings.get("plot_type", "")))
-                )
-
-                if want_anim:
-                    # FuncAnimation registers a timer with Tk — must run on main thread.
-                    def render_animated():
-                        try:
-                            if self.plot_mgr.plot_animated(self.ax, settings):
-                                self.status.config(text="Animated plot created")
-                            else:
-                                self.plot_mgr.plot(self.ax, settings)
-                                self.status.config(text="Animation failed — using static plot")
-                            self.canvas.draw()
-                            self._update_nav_buttons()
-                            self._update_animation_buttons()
-                            self._sync_plot_status()
-                        except Exception as exc:
-                            messagebox.showerror("Plot error", str(exc))
-                            self.status.config(text="Plot failed")
-                            self._update_nav_buttons()
-                            self._update_animation_buttons()
-                    self.after(0, render_animated)
-                else:
-                    # Computation (DB queries, weight calc) stays on the worker thread.
-                    self.plot_mgr.stop_animation()
-                    self.plot_mgr.plot(self.ax, settings)
-                    # canvas.draw() and all Tk widget mutations go back to the main thread.
-                    def finish():
-                        self.canvas.draw()
-                        self.status.config(text="Ready")
-                        self._update_nav_buttons()
-                        self._update_animation_buttons()
-                        self._sync_plot_status()
-                    self.after(0, finish)
+                # Computation (DB queries, weight calc) stays on the worker thread.
+                self.plot_mgr.plot(self.ax, settings)
+                self._attach_selected_feature_health(settings)
+                # canvas.draw() and all Tk widget mutations go back to the main thread.
+                def finish():
+                    self.canvas.draw()
+                    self.status.config(text="Ready")
+                    self._update_nav_buttons()
+                    self._sync_plot_status()
+                self.after(0, finish)
 
             except Exception as e:
                 def handle_err(exc=e):
                     messagebox.showerror("Plot error", str(exc))
                     self.status.config(text="Plot failed")
                     self._update_nav_buttons()
-                    self._update_animation_buttons()
                 self.after(0, handle_err)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -328,62 +280,95 @@ class BrowserApp(tk.Tk):
     def _sync_plot_status(self):
         self.lbl_desc.config(text=self.plot_mgr.last_description)
         self.tab_params.update(self.plot_mgr.last_fit_info)
-        self.tab_diagnostics.update(self.plot_mgr.last_fit_info)
+        self.tab_health.update(self.plot_mgr.last_fit_info)
+
+    def _on_tab_changed(self, _event=None):
+        try:
+            if self.notebook.select() != str(self.tab_status):
+                return
+            settings = self.inputs.get_settings()
+        except Exception:
+            return
+
+        def worker():
+            info = dict(self.plot_mgr.last_fit_info or {})
+            if not info:
+                info = {
+                    "ticker": settings.get("target", ""),
+                    "asof": settings.get("asof", ""),
+                    "fit_by_expiry": {},
+                }
+            feature_health = self._compute_selected_feature_health(settings)
+            if feature_health:
+                info["feature_health"] = feature_health
+            self.after(0, lambda i=info: self.tab_health.update(i))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _compute_selected_feature_health(self, settings: dict):
+        from analysis.feature_health import build_feature_construction_result
+
+        target = (settings.get("target") or "").upper()
+        peers = [str(p).upper() for p in settings.get("peers") or [] if str(p).strip()]
+        asof = settings.get("asof")
+        if not target or not peers or not asof:
+            return None
+        weight_method = settings.get("weight_method", "corr")
+        feature_mode = settings.get("feature_mode", "iv_atm")
+        weight_mode = "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
+        result = build_feature_construction_result(
+            target=target,
+            peers=peers,
+            asof=asof,
+            weight_mode=weight_mode,
+            atm_band=settings.get("atm_band"),
+            max_expiries=settings.get("max_expiries"),
+        )
+        return result.feature_health
+
+    def _attach_selected_feature_health(self, settings: dict):
+        try:
+            feature_health = self._compute_selected_feature_health(settings)
+            if not feature_health:
+                return
+            if not isinstance(self.plot_mgr.last_fit_info, dict):
+                target = (settings.get("target") or "").upper()
+                self.plot_mgr.last_fit_info = {
+                    "ticker": target,
+                    "asof": settings.get("asof"),
+                    "fit_by_expiry": {},
+                }
+            self.plot_mgr.last_fit_info["feature_health"] = feature_health
+        except Exception:
+            pass
+
+    def _open_health_expiry(self, row):
+        if not row:
+            self.notebook.select(self.tab_browser)
+            return
+        dte = row.get("DTE")
+        try:
+            days = float(dte)
+            self.inputs.set_T_days(days)
+        except Exception:
+            pass
+        try:
+            self.inputs.cmb_plot.set("Smile (K/S vs IV)")
+            self.inputs._sync_settings()
+            self.inputs._refresh_visibility()
+        except Exception:
+            pass
+        self.notebook.select(self.tab_browser)
+        self._refresh_plot()
+
+    def _open_health_signals(self, _row=None):
+        if hasattr(self, "tab_rv_signals"):
+            self.notebook.select(self.tab_rv_signals)
 
     def _update_nav_buttons(self):
         state = tk.NORMAL if self.plot_mgr.is_smile_active() else tk.DISABLED
         self.btn_prev.config(state=state)
         self.btn_next.config(state=state)
-
-    def _update_animation_buttons(self):
-        """Update animation control button states."""
-        plot_type = self.inputs.get_plot_type()
-        has_anim_support = self.plot_mgr.has_animation_support(plot_id(plot_type))
-        is_animated = self.var_animated.get()
-        is_anim_active = self.plot_mgr.is_animation_active()
-
-        # Enable/disable animation checkbox based on plot type support
-        anim_state = tk.NORMAL if has_anim_support else tk.DISABLED
-        self.chk_animated.config(state=anim_state)
-
-        # Enable/disable animation controls based on animation state
-        control_state = tk.NORMAL if (is_animated and is_anim_active) else tk.DISABLED
-        self.btn_play_pause.config(state=control_state)
-        self.btn_stop.config(state=control_state)
-        self.speed_scale.config(state=control_state)
-
-        # Update play/pause button text
-        if is_anim_active and not self.plot_mgr._animation_paused:
-            self.btn_play_pause.config(text="Pause")
-        else:
-            self.btn_play_pause.config(text="Play")
-
-    def _toggle_animation_mode(self):
-        """Handle animation checkbox toggle."""
-        # Refresh plot when animation mode changes
-        self._refresh_plot()
-
-    def _toggle_animation(self):
-        """Toggle animation play/pause."""
-        if self.plot_mgr.is_animation_active():
-            if self.plot_mgr._animation_paused:
-                self.plot_mgr.start_animation()
-            else:
-                self.plot_mgr.pause_animation()
-            self._update_animation_buttons()
-
-    def _stop_animation(self):
-        """Stop animation."""
-        self.plot_mgr.stop_animation()
-        self._update_animation_buttons()
-
-    def _on_speed_change(self, value):
-        """Handle animation speed change."""
-        try:
-            speed_ms = int(2100 - float(value))  # Invert scale (higher value = faster)
-            self.plot_mgr.set_animation_speed(speed_ms)
-        except Exception:
-            pass
 
     def _load_tickers(self):
         try:

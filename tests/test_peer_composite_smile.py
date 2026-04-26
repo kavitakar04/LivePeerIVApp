@@ -15,6 +15,55 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from data.db_utils import ensure_initialized
 from analysis.beta_builder import iv_surface_betas, peer_weights_from_correlations
 from analysis.peer_composite_builder import build_surface_grids, combine_surfaces
+from analysis.peer_smile_composite import build_peer_smile_composite
+
+
+def test_peer_smile_composite_averages_fitted_peers_on_common_grid(monkeypatch):
+    def make_peer(level, curvature):
+        S = 100.0
+        T = 30 / 365.25
+        mny = np.array([0.8, 0.9, 1.0, 1.1, 1.2])
+        iv = level + curvature * (mny - 1.0) ** 2
+        return {
+            "T_arr": np.full_like(mny, T, dtype=float),
+            "K_arr": S * mny,
+            "sigma_arr": iv,
+            "S_arr": np.full_like(mny, S, dtype=float),
+        }
+
+    def fake_fit(_model, S, K, _T, IV):
+        x = np.asarray(K, dtype=float) / float(S) - 1.0
+        a, b, c = np.polyfit(x, np.asarray(IV, dtype=float), 2)
+        return {"a": a, "b": b, "c": c}
+
+    def fake_predict(_model, S, K, _T, params):
+        x = np.asarray(K, dtype=float) / float(S) - 1.0
+        return params["a"] * x**2 + params["b"] * x + params["c"]
+
+    monkeypatch.setattr("analysis.peer_smile_composite.fit_valid_model_params", fake_fit)
+    monkeypatch.setattr("analysis.peer_smile_composite.predict_model_iv", fake_predict)
+
+    peers = {"P1": make_peer(0.20, 0.80), "P2": make_peer(0.30, 0.40)}
+    out = build_peer_smile_composite(
+        peers,
+        {"P1": 0.25, "P2": 0.75},
+        model="svi",
+        target_T=30 / 365.25,
+        moneyness_grid=(0.7, 1.3, 121),
+    )
+
+    grid = out["moneyness"]
+    p1 = out["peer_curves"]["P1"]
+    p2 = out["peer_curves"]["P2"]
+    expected = 0.25 * p1 + 0.75 * p2
+
+    assert len(grid) == 121
+    assert np.allclose(out["iv"], expected)
+    assert np.std(out["iv"]) > 1e-4
+    assert np.all(out["iv"] >= np.minimum(p1, p2) - 1e-12)
+    assert np.all(out["iv"] <= np.maximum(p1, p2) + 1e-12)
+    assert out["envelope_ok"] is True
+    assert out["skipped"] == {}
 
 
 def create_smile_test_db():

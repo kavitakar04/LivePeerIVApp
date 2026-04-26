@@ -318,6 +318,51 @@ class TestGenerateRVSignals:
         assert len(atm_signals) == 1
         assert abs(float(atm_signals.iloc[0]["z_score"]) - 2.5) < 0.01
 
+    def test_adds_actual_peer_atm_signals(self):
+        from analysis.rv_analysis import generate_rv_signals
+
+        def fake_compute_peer_weights(target, peers, weight_mode, **kwargs):
+            return pd.Series({p: 1.0 / len(peers) for p in peers})
+
+        def fake_rv_report(*args, **kwargs):
+            df = pd.DataFrame({
+                "asof_date": ["2024-01-15"],
+                "pillar_days": [30],
+                "iv_target": [0.20],
+                "iv_synth": [0.18],
+                "spread": [0.02],
+                "z": [2.0],
+                "pct_rank": [90.0],
+            })
+            return df, {}
+
+        def fake_fetch_atm(ticker, pillar_days, tolerance_days=10.0):
+            iv = 0.20 if ticker == "SPY" else 0.16
+            rows = []
+            for i in range(8):
+                rows.append({
+                    "asof_date": f"2024-01-{i + 8:02d}",
+                    "pillar_days": 30,
+                    "iv": iv,
+                })
+            rows[-1]["iv"] = 0.22 if ticker == "SPY" else 0.17
+            return pd.DataFrame(rows)
+
+        with patch("analysis.analysis_pipeline.compute_peer_weights", fake_compute_peer_weights):
+            with patch("analysis.analysis_pipeline.relative_value_atm_report_corrweighted", fake_rv_report):
+                with patch("analysis.analysis_pipeline._fetch_target_atm", fake_fetch_atm):
+                    with patch("analysis.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
+                        with patch("analysis.rv_analysis.compute_term_shape_dislocation", return_value={}):
+                            result = generate_rv_signals(
+                                "SPY", ["QQQ"], asof="2024-01-15",
+                                weight_mode="corr_iv_atm", lookback=5, min_abs_z=0.0,
+                            )
+
+        peer_rows = result[(result["comparison"] == "peer") & (result["peer"] == "QQQ")]
+        assert len(peer_rows) == 1
+        assert peer_rows.iloc[0]["reference_label"] == "Actual peer QQQ"
+        assert "actual peer QQQ" in peer_rows.iloc[0]["description"]
+
 
 # ---------------------------------------------------------------------------
 # generate_rv_opportunity_dashboard - synthesis layer
@@ -345,6 +390,7 @@ class TestGenerateRVOpportunityDashboard:
         monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (80% same-dir, 70% hit)", {"strength": "Strong"}, []))
         monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.9}, []))
         monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.2}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
 
         payload = generate_rv_opportunity_dashboard(
             "SPY", ["QQQ", "IWM"], asof="2024-01-15", weight_mode="corr_iv_atm"
@@ -356,9 +402,15 @@ class TestGenerateRVOpportunityDashboard:
         assert row["rank"] == 1
         assert row["direction"] == "Rich"
         assert row["feature"] == "ATM"
+        assert row["metric"] == "Vol level"
         assert row["maturity"] == "30d"
         assert row["confidence"] == "High"
-        assert "SPY 30d ATM rich vs peers" in row["opportunity"]
+        assert "SPY 30d overall implied volatility is rich vs peers" in row["opportunity"]
+        assert row["signal"]["location"]["metric_family"] == "level"
+        assert row["signal"]["magnitude"]["direction"] == "Rich"
+        assert row["signal"]["structure"]["surface_vs_surface_grid_consistency"] == "Comparable"
+        assert "narrative" in row["signal"]
+        assert payload["integration_status"]["system_health"]["quality"] == "Good"
         assert payload["context_cards"]["data_quality_warnings"] == 0
         assert payload["executive_summary"]
 
@@ -383,14 +435,112 @@ class TestGenerateRVOpportunityDashboard:
         monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Unavailable", {}, ["Spillover summary has not been generated."]))
         monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Poor", {"avg_surface_corr": 0.1}, ["Peer surfaces have weak structural similarity."]))
         monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Cluster", {}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
 
         payload = generate_rv_opportunity_dashboard("SPY", ["QQQ"], asof="2024-01-15")
         row = payload["opportunities"].iloc[0]
 
         assert row["data_quality"] == "Degraded"
         assert row["feature"] == "Curvature"
-        assert "degraded" in row["warnings"].lower()
-        assert payload["context_cards"]["data_quality_warnings"] == 3
+        assert row["metric"] == "Smile convexity"
+        assert row["signal"]["location"]["metric_family"] == "convexity"
+        assert row["signal"]["calculation"]["target_value"] == 0.05
+        assert row["signal"]["calculation"]["synthetic_value"] == 0.02
+        assert row["signal"]["calculation"]["spread"] == 0.03
+        assert "convexity spread = target smile curvature - weighted peer smile curvature" in row["signal"]["calculation"]["display"]
+
+    def test_dashboard_labels_actual_peer_reference(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["ATM Level"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [30],
+            "value": [0.22],
+            "synth_value": [0.17],
+            "spread": [0.05],
+            "z_score": [2.1],
+            "pct_rank": [92.0],
+            "description": ["SPY ATM vol vs actual peer QQQ at 30d"],
+            "comparison": ["peer"],
+            "peer": ["QQQ"],
+            "reference_label": ["Actual peer QQQ"],
+        })
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (80% same-dir, 70% hit)", {"strength": "Strong"}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.9}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.2}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
+
+        payload = generate_rv_opportunity_dashboard(
+            "SPY", ["QQQ"], asof="2024-01-15", weight_mode="corr_iv_atm"
+        )
+
+        row = payload["opportunities"].iloc[0]
+        assert "vs QQQ" in row["opportunity"]
+        assert "versus Actual peer QQQ" in row["why"]
+        assert row["signal"]["calculation"]["synthetic_label"] == "Actual peer QQQ"
+        assert row["signal"]["magnitude"]["comparison"] == "peer"
+
+    def test_model_quality_handles_unreadable_log_without_traceback(self, monkeypatch):
+        from analysis import rv_analysis
+        import analysis.model_params_logger as logger_mod
+
+        def broken_load_model_params():
+            raise RuntimeError("Couldn't deserialize thrift: TProtocolException: Invalid data")
+
+        monkeypatch.setattr(logger_mod, "load_model_params", broken_load_model_params)
+
+        quality, warnings, meta = rv_analysis._load_model_quality("SPY", ["QQQ"], "2024-01-15")
+
+        assert quality == "Unknown"
+        assert warnings == ["Model parameter log is unavailable."]
+        assert meta["model"] == "Unknown"
+
+    def test_dashboard_attaches_supporting_contracts(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["Skew"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [30],
+            "value": [0.10],
+            "synth_value": [0.04],
+            "spread": [0.06],
+            "z_score": [2.1],
+            "pct_rank": [92.0],
+            "description": ["SPY skew"],
+        })
+        contracts = [{
+            "expiry": "2024-02-16",
+            "strike": 95.0,
+            "moneyness": 0.90,
+            "call_put": "P",
+            "iv": 0.31,
+            "bid": 1.10,
+            "ask": 1.25,
+            "volume": 100.0,
+            "open_interest": 250.0,
+        }]
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Suggestive (70% same-dir, 65% hit)", {"strength": "Suggestive", "same_direction_probability": 0.7, "hit_rate": 0.65}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.8, "avg_common_cells": 9}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Cluster", {"peer_abs_median_move": 0.02}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: contracts)
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ"], asof="2024-01-15")
+        signal = payload["opportunities"].iloc[0]["signal"]
+
+        assert signal["location"]["metric_family"] == "asymmetry"
+        assert signal["supporting_contracts"] == contracts
+        assert "SPY 2024-02-16 puts" in signal["narrative"]["contracts"]
 
     def test_event_context_classifies_broad_move_as_systemic(self, monkeypatch):
         from analysis import analysis_pipeline

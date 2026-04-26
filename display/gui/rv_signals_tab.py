@@ -19,37 +19,31 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from analysis.settings import DEFAULT_MAX_EXPIRIES
+
 
 _COLUMNS = (
     "rank",
     "opportunity",
     "direction",
-    "feature",
+    "metric",
     "maturity",
-    "spread",
     "z_score",
-    "percentile",
     "confidence",
     "event_context",
-    "spillover_support",
-    "data_quality",
     "why",
 )
 
 _HEADERS = {
     "rank": ("Rank", 54),
-    "opportunity": ("Opportunity", 260),
+    "opportunity": ("Opportunity", 360),
     "direction": ("Direction", 82),
-    "feature": ("Feature", 110),
+    "metric": ("Metric", 130),
     "maturity": ("Maturity", 82),
-    "spread": ("Spread", 82),
     "z_score": ("Z-Score", 82),
-    "percentile": ("Percentile", 86),
     "confidence": ("Confidence", 94),
-    "event_context": ("Event Context", 118),
-    "spillover_support": ("Spillover Support", 170),
-    "data_quality": ("Data Quality", 105),
-    "why": ("Why", 380),
+    "event_context": ("Context", 118),
+    "why": ("Why", 520),
 }
 
 
@@ -134,7 +128,7 @@ class RVSignalsFrame(ttk.Frame):
         for col in _COLUMNS:
             header, width = _HEADERS[col]
             self.tree.heading(col, text=header)
-            anchor = "w" if col in {"opportunity", "why", "spillover_support"} else "center"
+            anchor = "w" if col in {"opportunity", "why"} else "center"
             self.tree.column(col, width=width, anchor=anchor, stretch=(col in {"opportunity", "why"}))
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
@@ -147,6 +141,7 @@ class RVSignalsFrame(ttk.Frame):
         self.tree.tag_configure("cheap", background="#e8f0ff")
         self.tree.tag_configure("neutral", background="#f5f5f5")
         self.tree.tag_configure("warning", background="#fff6d9")
+        self.tree.tag_configure("high", font=("", 10, "bold"))
         self.tree.bind("<<TreeviewSelect>>", self._on_row_selected)
 
         detail = ttk.LabelFrame(main, text="Signal Detail")
@@ -185,9 +180,9 @@ class RVSignalsFrame(ttk.Frame):
         feature_mode = settings.get("feature_mode", "iv_atm")
         weight_mode = "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
         try:
-            max_expiries = int(settings.get("max_expiries", 6) or 6)
+            max_expiries = int(settings.get("max_expiries", DEFAULT_MAX_EXPIRIES) or DEFAULT_MAX_EXPIRIES)
         except (TypeError, ValueError):
-            max_expiries = 6
+            max_expiries = DEFAULT_MAX_EXPIRIES
 
         if not target or not peers or not asof:
             self.lbl_status.config(text="Set target, peers, and date first.")
@@ -246,7 +241,7 @@ class RVSignalsFrame(ttk.Frame):
         if opportunities is None or opportunities.empty:
             self.tree.insert(
                 "", "end",
-                values=("", "No opportunities", "", "", "", "", "", "", "", "", "", "", "Insufficient data or no threshold breach."),
+                values=("", "No opportunities", "", "", "", "", "", "Insufficient data or no threshold breach."),
                 tags=("neutral",),
             )
             warnings = payload.get("warnings") or []
@@ -258,15 +253,9 @@ class RVSignalsFrame(ttk.Frame):
             values = []
             for col in _COLUMNS:
                 value = row.get(col, "")
-                if col == "spread":
-                    f = float(value) if pd.notna(value) and np.isfinite(float(value)) else np.nan
-                    values.append(f"{f:+.2%}" if np.isfinite(f) else "-")
-                elif col == "z_score":
+                if col == "z_score":
                     f = float(value) if pd.notna(value) and np.isfinite(float(value)) else np.nan
                     values.append(f"{f:+.2f}" if np.isfinite(f) else "-")
-                elif col == "percentile":
-                    f = float(value) if pd.notna(value) and np.isfinite(float(value)) else np.nan
-                    values.append(f"{f:.0f}" if np.isfinite(f) else "-")
                 else:
                     values.append(str(value) if value != "" and pd.notna(value) else "-")
 
@@ -280,7 +269,8 @@ class RVSignalsFrame(ttk.Frame):
                 tag = "cheap"
             else:
                 tag = "neutral"
-            self.tree.insert("", "end", iid=str(idx), values=values, tags=(tag,))
+            tags = (tag, "high") if str(row.get("confidence")) == "High" else (tag,)
+            self.tree.insert("", "end", iid=str(idx), values=values, tags=tags)
 
         first = self.tree.get_children()
         if first:
@@ -315,19 +305,68 @@ class RVSignalsFrame(ttk.Frame):
             self._set_detail("No selected signal.")
 
     def _render_detail_for_index(self, idx: int):
+        import math
+
         if self._last_opportunities is None or idx not in self._last_opportunities.index:
             self._set_detail("No selected signal.")
             return
         row = self._last_opportunities.loc[idx]
+        signal = row.get("signal", {}) if hasattr(row, "get") else {}
+        if not isinstance(signal, dict):
+            signal = {}
+        narrative = signal.get("narrative", {}) if isinstance(signal.get("narrative", {}), dict) else {}
+        significance = signal.get("significance", {}) if isinstance(signal.get("significance", {}), dict) else {}
+        calculation = signal.get("calculation", {}) if isinstance(signal.get("calculation", {}), dict) else {}
+        structure = signal.get("structure", {}) if isinstance(signal.get("structure", {}), dict) else {}
+        dynamics = signal.get("dynamics", {}) if isinstance(signal.get("dynamics", {}), dict) else {}
+        data_quality = signal.get("data_quality", {}) if isinstance(signal.get("data_quality", {}), dict) else {}
+        contracts = signal.get("supporting_contracts", [])
+        contract_lines = []
+        for c in contracts[:10] if isinstance(contracts, list) else []:
+            def fmt(v, spec):
+                try:
+                    f = float(v)
+                    return format(f, spec) if math.isfinite(f) else "-"
+                except Exception:
+                    return "-"
+
+            contract_lines.append(
+                f"- {c.get('expiry', '-')} {c.get('call_put', '-')} "
+                f"K={fmt(c.get('strike'), '.2f')} K/S={fmt(c.get('moneyness'), '.2f')} "
+                f"IV={fmt(c.get('iv'), '.2%')} bid/ask={fmt(c.get('bid'), '.2f')}/{fmt(c.get('ask'), '.2f')} "
+                f"vol={fmt(c.get('volume'), '.0f')} OI={fmt(c.get('open_interest'), '.0f')}"
+            )
+        contracts_text = "\n".join(contract_lines) if contract_lines else "No contract-level quotes available for this signal."
         warnings = str(row.get("warnings", "") or "None")
         detail = (
-            f"Opportunity: {row.get('opportunity', '')}\n\n"
-            f"What differs vs peers:\n{row.get('what_differs', '')}\n\n"
-            f"Why it matters:\n{row.get('why_matters', '')}\n\n"
-            f"Statistical read:\n{row.get('statistical_read', '')}\n\n"
-            f"Structural comparability:\n{row.get('comparability', '')}\n\n"
-            f"Spillover / convergence support:\n{row.get('spillover_support', '')}\n\n"
-            f"Event context:\n{row.get('event_context', '')}\n\n"
-            f"Warnings:\n{warnings}"
+            f"Explanation\n"
+            f"{narrative.get('headline', row.get('opportunity', ''))}\n"
+            f"{narrative.get('what_differs', row.get('what_differs', ''))}\n"
+            f"{narrative.get('why_matters', row.get('why_matters', ''))}\n\n"
+            f"Signal Calculation\n"
+            f"{calculation.get('target_label', 'Target')}: {fmt(calculation.get('target_value'), '.4f')}\n"
+            f"{calculation.get('synthetic_label', 'Weighted peer synthetic')}: {fmt(calculation.get('synthetic_value'), '.4f')}\n"
+            f"Spread: {fmt(calculation.get('spread'), '+.4f')}\n"
+            f"{calculation.get('display', '')}\n\n"
+            f"Statistical Context\n"
+            f"Z-score: {significance.get('z_score', row.get('z_score', '-'))}\n"
+            f"Percentile: {significance.get('percentile', row.get('percentile', '-'))}\n"
+            f"{row.get('statistical_read', '')}\n\n"
+            f"Structural Validation\n"
+            f"Surface consistency: {structure.get('surface_vs_surface_grid_consistency', '')}\n"
+            f"Similarity score: {structure.get('similarity_score', '')}\n"
+            f"{row.get('comparability', '')}\n\n"
+            f"Dynamics\n"
+            f"Spillover: {dynamics.get('label', row.get('spillover_support', ''))}\n"
+            f"Same-direction probability: {dynamics.get('same_direction_probability', '-')}\n"
+            f"Lag profile: {dynamics.get('lag_profile', '-')}\n\n"
+            f"Data Quality\n"
+            f"Fit quality: {data_quality.get('fit_quality', row.get('data_quality', ''))}\n"
+            f"RMSE: {data_quality.get('rmse', '-')}\n"
+            f"Coverage: {data_quality.get('coverage', '-')}\n"
+            f"Warnings: {warnings}\n\n"
+            f"Supporting Contracts\n"
+            f"{narrative.get('contracts', '')}\n"
+            f"{contracts_text}"
         )
         self._set_detail(detail)

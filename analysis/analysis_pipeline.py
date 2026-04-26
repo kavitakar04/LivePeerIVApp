@@ -319,8 +319,10 @@ def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: 
     if df.empty:
         return df
 
-    def per_pillar(g: pd.DataFrame) -> pd.DataFrame:
+    def per_pillar(g: pd.DataFrame, pillar_days: int | float | None = None) -> pd.DataFrame:
         g = g.copy()
+        if "pillar_days" not in g.columns:
+            g["pillar_days"] = pillar_days
         g["spread"] = g["iv_target"] - g["iv_synth"]
         roll = max(5, int(lookback // 5))
         m = g["spread"].rolling(lookback, min_periods=roll).mean()
@@ -332,7 +334,8 @@ def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: 
         g["pct_rank"] = g["spread"].rolling(lookback, min_periods=roll).apply(_pct_rank, raw=False)
         return g
 
-    return df.groupby("pillar_days", group_keys=False).apply(per_pillar, include_groups=False)
+    parts = [per_pillar(g, pillar) for pillar, g in df.groupby("pillar_days", group_keys=False)]
+    return pd.concat(parts, ignore_index=True) if parts else df
 
 
 def relative_value_atm_report_corrweighted(
@@ -879,7 +882,7 @@ def prepare_smile_data(
             syn_surface = None
 
     peer_slices: Dict[str, Dict[str, np.ndarray]] = {}
-    if overlay_peers and peers:
+    if (overlay_peers or overlay_synth) and peers:
         for p in peers:
             df_p = get_smile_slice(p, asof, T_target_years=None, max_expiries=max_expiries)
             if df_p is None or df_p.empty:

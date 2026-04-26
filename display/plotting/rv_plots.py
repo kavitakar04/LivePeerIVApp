@@ -26,6 +26,27 @@ __all__ = [
 # Surface residual heatmap (Phase 1 output)
 # ---------------------------------------------------------------------------
 
+def _clear_rv_heatmap_colorbar(fig: plt.Figure) -> None:
+    """Remove RV heatmap helper axes from a prior redraw."""
+    if hasattr(fig, "_rv_heatmap_colorbar"):
+        try:
+            fig._rv_heatmap_colorbar.remove()
+        except Exception:
+            pass
+        try:
+            delattr(fig, "_rv_heatmap_colorbar")
+        except Exception:
+            pass
+    if hasattr(fig, "_rv_heatmap_colorbar_ax"):
+        try:
+            fig._rv_heatmap_colorbar_ax.remove()
+        except Exception:
+            pass
+        try:
+            delattr(fig, "_rv_heatmap_colorbar_ax")
+        except Exception:
+            pass
+
 def plot_surface_residual_heatmap(
     ax: plt.Axes,
     residual_df: pd.DataFrame,
@@ -55,6 +76,11 @@ def plot_surface_residual_heatmap(
     annotate : bool
         Whether to print numeric values inside each cell.
     """
+    fig = ax.figure
+    if not hasattr(fig, "_rv_heatmap_orig_position"):
+        fig._rv_heatmap_orig_position = ax.get_position().frozen()
+    _clear_rv_heatmap_colorbar(fig)
+    ax.set_position(fig._rv_heatmap_orig_position)
     ax.clear()
 
     if residual_df is None or residual_df.empty:
@@ -106,9 +132,13 @@ def plot_surface_residual_heatmap(
                     )
 
     try:
-        cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        bbox = ax.get_position()
+        cax = fig.add_axes([bbox.x1 + 0.012, bbox.y0, 0.014, bbox.height])
+        cbar = fig.colorbar(im, cax=cax)
         cbar.set_label("z-score (rich→red, cheap→blue)", fontsize=8)
         cbar.ax.tick_params(labelsize=7)
+        fig._rv_heatmap_colorbar = cbar
+        fig._rv_heatmap_colorbar_ax = cax
     except Exception:
         pass
 
@@ -213,4 +243,3 @@ def plot_skew_spread(
 
     ax.grid(True, alpha=0.2)
     ax.set_title(title or "Skew & Curvature Spread (target vs synthetic)", fontsize=10)
-

@@ -4,13 +4,17 @@ matplotlib.use("Agg")
 from display.gui.gui_plot_manager import PlotManager
 
 
-def test_has_animation_support_smile_and_surface():
+def test_plot_manager_animation_support_removed():
     mgr = PlotManager()
-    # Labels are accepted directly; plot_id() is applied internally
-    assert mgr.has_animation_support("Smile (K/S vs IV)")
-    assert mgr.has_animation_support("Peer Composite Surface")
-    assert not mgr.has_animation_support("Term (ATM vs T)")
-    # Raw IDs also work
-    assert mgr.has_animation_support("smile")
-    assert mgr.has_animation_support("synthetic_surface")
-    assert not mgr.has_animation_support("term")
+    removed_methods = [
+        "has_animation_support",
+        "plot_animated",
+        "start_animation",
+        "stop_animation",
+        "pause_animation",
+        "set_animation_speed",
+        "is_animation_active",
+    ]
+
+    for method in removed_methods:
+        assert not hasattr(mgr, method)

@@ -16,7 +16,8 @@ from analysis.settings import (
     DEFAULT_WEIGHT_METHOD,
     DEFAULT_WEIGHT_POWER,
 )
-from analysis.unified_weights import compute_unified_weights
+from analysis.feature_health import build_feature_construction_result
+from analysis.unified_weights import compute_unified_weights, similarity_matrix_from_features
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,7 @@ def prepare_correlation_view(
     weight_power: float = DEFAULT_WEIGHT_POWER,
     max_expiries: int = DEFAULT_MAX_EXPIRIES,
     weight_mode: str = DEFAULT_WEIGHT_METHOD,
+    show_values: bool = True,
     use_cache: bool = True,
     **weight_config,
 ) -> CorrelationViewData:
@@ -249,16 +251,33 @@ def prepare_correlation_view(
         "asof": pd.to_datetime(asof).floor("min").isoformat(),
         "atm_band": float(atm_band),
         "max_expiries": int(max_expiries),
+        "weight_mode": str(weight_mode),
+        "clip_negative": bool(clip_negative),
+        "weight_power": float(weight_power),
+        "weight_config": {k: str(v) for k, v in sorted(weight_config.items())},
     }
 
     def _builder() -> tuple[pd.DataFrame, pd.DataFrame]:
-        return corr_by_expiry_rank(
-            get_slice=get_smile_slice,
-            tickers=tickers,
+        method_label, _basis_label = split_weight_mode(weight_mode)
+        method = str(weight_mode or "corr").split("_", 1)[0]
+        feature_result = build_feature_construction_result(
+            target=target or tickers[0],
+            peers=[t for t in tickers if t != str(target or tickers[0]).upper()],
+            weight_mode=weight_mode,
             asof=asof,
-            max_expiries=max_expiries,
             atm_band=atm_band,
+            max_expiries=max_expiries,
+            use_cache=use_cache,
+            **weight_config,
         )
+        feature_df = feature_result.feature_matrix
+        if feature_df.empty:
+            return pd.DataFrame(index=tickers), pd.DataFrame(index=tickers, columns=tickers, dtype=float)
+        display_method = method if method in {"corr", "cosine", "pca"} else "corr"
+        sim_df = similarity_matrix_from_features(feature_df, method=display_method)
+        sim_df.attrs["display_method"] = display_method
+        sim_df.attrs["requested_method"] = method_label
+        return feature_df, sim_df
 
     if use_cache:
         atm_df, corr_df = compute_or_load("corr", payload, _builder)
@@ -299,5 +318,17 @@ def prepare_correlation_view(
             "clip_negative": bool(clip_negative),
             "weight_power": float(weight_power),
             "tickers": tickers,
+            "feature_diagnostics": getattr(atm_df, "attrs", {}).get("feature_diagnostics", {}),
+            "feature_health": build_feature_construction_result(
+                target=target or tickers[0],
+                peers=[t for t in tickers if t != str(target or tickers[0]).upper()],
+                weight_mode=weight_mode,
+                asof=asof,
+                atm_band=atm_band,
+                max_expiries=max_expiries,
+                use_cache=True,
+                **weight_config,
+            ).feature_health,
+            "similarity_display_method": getattr(corr_df, "attrs", {}).get("display_method", "corr"),
         },
     )

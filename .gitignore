@@ -58,6 +58,7 @@ Thumbs.db
 # Project specific
 project_logging/logging_history/
 data/cache/
+data/gui_settings.json
 improved_correlation_matrix.png
 test_correlation_matrix.png
 

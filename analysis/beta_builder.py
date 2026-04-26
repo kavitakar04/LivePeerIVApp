@@ -27,6 +27,8 @@ from analysis.settings import (
     DEFAULT_WEIGHT_POWER,
 )
 
+pca_regress_weights = uw_pca_regress_weights
+
 
 # =========================
 # Small numeric helpers (lightweight; kept local)

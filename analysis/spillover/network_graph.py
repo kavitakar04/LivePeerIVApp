@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import math
+
 import pandas as pd
 
 try:
@@ -78,7 +80,12 @@ def build_spillover_digraph(
     if horizon is not None:
         df = df[df["h"] == int(horizon)]
 
-    df = df[(df["n"] >= int(min_n)) & (df["hit_rate"] >= float(min_hit_rate))].copy()
+    df[weight_col] = pd.to_numeric(df[weight_col], errors="coerce")
+    df = df[
+        (df["n"] >= int(min_n))
+        & (df["hit_rate"] >= float(min_hit_rate))
+        & df[weight_col].map(lambda x: math.isfinite(float(x)) if pd.notna(x) else False)
+    ].copy()
     if not include_negative:
         df = df[df[weight_col] >= 0.0]
 
@@ -86,8 +93,16 @@ def build_spillover_digraph(
     for _, row in df.iterrows():
         src = str(row["ticker"])
         dst = str(row["peer"])
+        weight = float(row[weight_col])
+        abs_weight = abs(weight)
+        if abs_weight <= 0.0:
+            continue
         attrs: dict[str, Any] = {
-            "weight": float(row[weight_col]),
+            "weight": weight,
+            "abs_weight": abs_weight,
+            # NetworkX shortest-path centrality treats this as a cost, not a
+            # strength. Stronger spillovers should therefore be shorter paths.
+            "distance": 1.0 / abs_weight,
             "h": int(row["h"]),
             "n": int(row["n"]),
             "hit_rate": float(row["hit_rate"]),
@@ -127,7 +142,18 @@ def build_corr_graph(
             corr = float(corr)
             if abs(corr) < float(min_abs_corr):
                 continue
-            G.add_edge(src, dst, weight=abs(corr), corr=corr, sign=1 if corr >= 0 else -1)
+            abs_corr = abs(corr)
+            if abs_corr <= 0.0:
+                continue
+            G.add_edge(
+                src,
+                dst,
+                weight=abs_corr,
+                abs_weight=abs_corr,
+                distance=1.0 / abs_corr,
+                corr=corr,
+                sign=1 if corr >= 0 else -1,
+            )
 
     return G
 
@@ -147,11 +173,14 @@ def compute_graph_metrics(G) -> pd.DataFrame:
                 "out_degree",
                 "in_strength",
                 "out_strength",
+                "in_signed_strength",
+                "out_signed_strength",
             ]
         )
 
     degree_c = nx.degree_centrality(G)
-    betweenness = nx.betweenness_centrality(G, weight="weight", normalized=True)
+    betweenness_weight = "distance" if nx.get_edge_attributes(G, "distance") else None
+    betweenness = nx.betweenness_centrality(G, weight=betweenness_weight, normalized=True)
 
     rows = []
     directed = G.is_directed()
@@ -166,14 +195,18 @@ def compute_graph_metrics(G) -> pd.DataFrame:
         if directed:
             row["in_degree"] = float(G.in_degree(node))
             row["out_degree"] = float(G.out_degree(node))
-            row["in_strength"] = float(G.in_degree(node, weight="weight"))
-            row["out_strength"] = float(G.out_degree(node, weight="weight"))
+            row["in_strength"] = float(G.in_degree(node, weight="abs_weight"))
+            row["out_strength"] = float(G.out_degree(node, weight="abs_weight"))
+            row["in_signed_strength"] = float(G.in_degree(node, weight="weight"))
+            row["out_signed_strength"] = float(G.out_degree(node, weight="weight"))
         else:
-            strength = float(G.degree(node, weight="weight"))
+            strength = float(G.degree(node, weight="abs_weight"))
             row["in_degree"] = float("nan")
             row["out_degree"] = float("nan")
             row["in_strength"] = float("nan")
             row["out_strength"] = strength
+            row["in_signed_strength"] = float("nan")
+            row["out_signed_strength"] = float("nan")
 
         rows.append(row)
 

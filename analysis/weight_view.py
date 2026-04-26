@@ -85,6 +85,8 @@ def resolve_peer_weights(
 
     try:
         if (
+            str(weight_mode or "").startswith("corr_")
+            and
             isinstance(last_corr_df, pd.DataFrame)
             and not last_corr_df.empty
             and last_corr_meta.get("weight_mode") == weight_mode

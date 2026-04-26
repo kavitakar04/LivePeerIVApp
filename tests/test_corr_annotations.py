@@ -44,7 +44,7 @@ def test_weight_legend_separate_axis():
     assert "Peer Weights" in weight_ax.get_title()
 
 
-def test_coverage_panel_does_not_overlap_colorbar():
+def test_atm_coverage_does_not_create_side_bar_plot():
     corr_df = pd.DataFrame(
         [[1.0, 0.5], [0.5, 1.0]], columns=["A", "B"], index=["A", "B"]
     )
@@ -57,8 +57,4 @@ def test_coverage_panel_does_not_overlap_colorbar():
     plot_correlation_details(ax, corr_df, show_values=False, atm_df=atm_df)
 
     assert hasattr(fig, "_corr_colorbar_ax")
-    assert hasattr(fig, "_corr_coverage_ax")
-    colorbar_right = fig._corr_colorbar_ax.get_position().x1
-    coverage_left = fig._corr_coverage_ax.get_position().x0
-
-    assert coverage_left - colorbar_right >= 0.04
+    assert not hasattr(fig, "_corr_coverage_ax")

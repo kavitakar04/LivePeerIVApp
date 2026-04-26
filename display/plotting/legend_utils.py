@@ -1,9 +1,4 @@
-"""Utility for interactive legend toggling.
-
-This module previously provided various animation helpers.  It now only
-offers a single helper that makes legend entries clickable to toggle the
-visibility of associated artists.
-"""
+"""Utilities for interactive legend toggling."""
 
 from typing import Dict, List
 
@@ -13,12 +8,26 @@ from matplotlib.legend import Legend
 
 def add_legend_toggles(ax: plt.Axes, series_map: Dict[str, List[plt.Artist]]) -> Legend:
     """Make legend entries clickable to toggle series with visual feedback."""
-    leg = ax.legend()
+    leg = ax.get_legend()
+    if leg is None:
+        handles, labels = ax.get_legend_handles_labels()
+        if len(labels) >= 5:
+            if len(ax.figure.axes) == 1:
+                ax.figure.subplots_adjust(right=0.78)
+            leg = ax.legend(
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1.0),
+                borderaxespad=0.0,
+                fontsize=8,
+                framealpha=0.92,
+            )
+        else:
+            leg = ax.legend(loc="upper right", fontsize=8, framealpha=0.92)
     fig = ax.figure
     handles = leg.legend_handles if hasattr(leg, "legend_handles") else leg.legendHandles
     texts = leg.get_texts()
 
-    # Make legend entries pickable
+    # Make legend entries pickable.
     for handle in handles:
         handle.set_picker(True)
         if hasattr(handle, "set_pickradius"):

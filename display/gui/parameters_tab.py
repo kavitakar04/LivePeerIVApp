@@ -56,6 +56,64 @@ def _params_summary(params: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def _model_display_name(model: Any) -> str:
+    labels = {
+        "svi": "SVI",
+        "sabr": "SABR",
+        "tps": "TPS",
+        "poly": "Polynomial",
+        "poly2": "Polynomial",
+        "sens": "Sensitivity",
+        "weight": "Weights",
+    }
+    text = str(model or "")
+    return labels.get(text.lower(), text)
+
+
+MODEL_HEALTH_MODELS = ("svi", "sabr", "tps")
+MODEL_RMSE_DEGRADED_THRESHOLD = 0.05
+
+
+def _model_health_status(params: dict[str, Any], quality: dict[str, Any]) -> tuple[str, str]:
+    """Return ok/degraded/failed using the same explicit RMSE warning threshold as plots."""
+    ok = _quality_value(quality, "ok")
+    rmse = _quality_value(quality, "rmse", params.get("rmse") if isinstance(params, dict) else None)
+    reason = str(_quality_value(quality, "reason", "") or "")
+    try:
+        rmse_f = float(rmse)
+    except (TypeError, ValueError):
+        rmse_f = math.nan
+
+    if ok is False:
+        if np_isfinite(rmse_f) and rmse_f > MODEL_RMSE_DEGRADED_THRESHOLD:
+            return "degraded", reason or f"RMSE {rmse_f:.4f} exceeds {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}"
+        if "rmse" in reason.lower() or "too high" in reason.lower():
+            return "degraded", reason
+        return "failed", reason or "fit failed quality gate"
+    if isinstance(params, dict) and params:
+        if np_isfinite(rmse_f) and rmse_f > MODEL_RMSE_DEGRADED_THRESHOLD:
+            return "degraded", f"RMSE {rmse_f:.4f} exceeds {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}"
+        return "ok", f"RMSE {_fmt(rmse_f, '.4f')}"
+    return "failed", reason or "insufficient data or fit not run"
+
+
+def np_isfinite(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _status_symbol(status: str) -> str:
+    if status == "ok":
+        return "✅ ok"
+    if status == "degraded":
+        return "⚠ degraded"
+    if status == "failed":
+        return "❌ failed"
+    return "—"
+
+
 def _weight_rows(info: Dict[str, Any]) -> list[dict[str, Any]]:
     weight_info = info.get("weight_info")
     if not isinstance(weight_info, dict):
@@ -154,10 +212,10 @@ def flatten_diagnostics_info(info: Dict[str, Any] | None) -> list[dict[str, Any]
             has_params = bool(params)
             quality_ok = _quality_value(quality, "ok")
 
-            if quality_ok is True or has_params:
-                status = "ok"
-            elif quality_ok is False:
+            if quality_ok is False:
                 status = "rejected"
+            elif quality_ok is True or has_params:
+                status = "ok"
             else:
                 status = "not_run"
 
@@ -186,6 +244,168 @@ def flatten_diagnostics_info(info: Dict[str, Any] | None) -> list[dict[str, Any]
 def flatten_fit_info(info: Dict[str, Any] | None) -> list[dict[str, Any]]:
     """Return user-facing expiry-level parameter rows."""
     return flatten_summary_info(info)
+
+
+def build_model_health_grid(info: Dict[str, Any] | None) -> dict[str, Any]:
+    """Build model x expiry health grid from the same fit metadata used downstream."""
+    if not isinstance(info, dict) or not isinstance(info.get("fit_by_expiry"), dict):
+        return {
+            "expiries": [],
+            "rows": [],
+            "primary_model": "Unavailable",
+            "rejected_models": [],
+            "partially_reliable_models": [],
+            "thresholds": {"rmse_degraded": MODEL_RMSE_DEGRADED_THRESHOLD},
+        }
+
+    fit_map = info.get("fit_by_expiry") or {}
+    expiries: list[dict[str, Any]] = []
+    status_by_model: dict[str, dict[str, str]] = {m: {} for m in MODEL_HEALTH_MODELS}
+    reasons_by_model: dict[str, dict[str, str]] = {m: {} for m in MODEL_HEALTH_MODELS}
+    expiry_lookup: dict[str, dict[str, Any]] = {}
+
+    for T_val, entry in sorted(fit_map.items(), key=lambda kv: float(kv[0])):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            dte = int(round(float(T_val) * 365.25))
+        except (TypeError, ValueError):
+            dte = len(expiries) + 1
+        label = f"{dte}d"
+        expiry = _date_part(entry.get("expiry"))
+        expiries.append({"label": label, "dte": dte, "expiry": expiry})
+        expiry_lookup[label] = {"DTE": dte, "Expiry": expiry}
+        quality_map = entry.get("quality") or {}
+        if not isinstance(quality_map, dict):
+            quality_map = {}
+        for model in MODEL_HEALTH_MODELS:
+            params = entry.get(model) or {}
+            quality = quality_map.get(model) or {}
+            status, reason = _model_health_status(params, quality)
+            status_by_model[model][label] = status
+            reasons_by_model[model][label] = reason
+
+    rows: list[dict[str, Any]] = []
+    model_counts: dict[str, dict[str, int]] = {}
+    for model in MODEL_HEALTH_MODELS:
+        counts = {
+            "ok": list(status_by_model[model].values()).count("ok"),
+            "degraded": list(status_by_model[model].values()).count("degraded"),
+            "failed": list(status_by_model[model].values()).count("failed"),
+        }
+        model_counts[model] = counts
+        row = {
+            "Model": _model_display_name(model),
+            "_model": model,
+            "_statuses": dict(status_by_model[model]),
+            "_reasons": dict(reasons_by_model[model]),
+        }
+        for exp in expiries:
+            label = exp["label"]
+            row[label] = _status_symbol(status_by_model[model].get(label, "missing"))
+        rows.append(row)
+
+    if expiries:
+        primary = max(
+            MODEL_HEALTH_MODELS,
+            key=lambda m: (model_counts[m]["ok"], -model_counts[m]["failed"], -model_counts[m]["degraded"]),
+        )
+        primary_model = _model_display_name(primary) if model_counts[primary]["ok"] else "Unavailable"
+    else:
+        primary_model = "Unavailable"
+
+    rejected = [
+        _model_display_name(m)
+        for m in MODEL_HEALTH_MODELS
+        if model_counts.get(m, {}).get("failed", 0) == len(expiries) and expiries
+    ]
+    partial = [
+        _model_display_name(m)
+        for m in MODEL_HEALTH_MODELS
+        if expiries
+        and model_counts.get(m, {}).get("ok", 0) > 0
+        and (model_counts.get(m, {}).get("failed", 0) > 0 or model_counts.get(m, {}).get("degraded", 0) > 0)
+    ]
+
+    return {
+        "expiries": expiries,
+        "rows": rows,
+        "primary_model": primary_model,
+        "rejected_models": rejected,
+        "partially_reliable_models": partial,
+        "thresholds": {"rmse_degraded": MODEL_RMSE_DEGRADED_THRESHOLD},
+        "expiry_lookup": expiry_lookup,
+    }
+
+
+def summarize_health_info(info: Dict[str, Any] | None) -> dict[str, Any]:
+    """Summarize diagnostics into a first-screen system health view."""
+    rows = flatten_diagnostics_info(info)
+    grid = build_model_health_grid(info)
+    if not rows:
+        return {
+            "overall": "No health data",
+            "model_quality": "Unknown",
+            "warnings": 0,
+            "failures": 0,
+            "fallbacks": 0,
+            "reliable_models": [],
+            "primary_model": grid["primary_model"],
+            "rejected_models": grid["rejected_models"],
+            "partially_reliable_models": grid["partially_reliable_models"],
+            "thresholds": grid["thresholds"],
+            "messages": ["Plot an IV view to populate model and data health."],
+        }
+
+    warnings = [
+        r for r in rows
+        if str(r.get("Status", "")).lower() in {"warning", "rejected", "failed", "error"}
+        or bool(r.get("Reason"))
+    ]
+    failures = [r for r in rows if str(r.get("Status", "")).lower() in {"rejected", "failed", "error"}]
+    fallbacks = [r for r in rows if str(r.get("Fallback", "none")).lower() not in {"", "none"}]
+    model_rows = [r for r in rows if str(r.get("Model", "")).lower() in {"svi", "sabr", "tps", "poly", "poly2"}]
+    reliable = sorted({
+        _model_display_name(r.get("Model"))
+        for r in model_rows
+        if str(r.get("Status", "")).lower() == "ok"
+        and str(r.get("Fallback", "none")).lower() in {"", "none"}
+    })
+
+    if failures:
+        model_quality = "Degraded"
+    elif warnings or fallbacks:
+        model_quality = "Check"
+    elif reliable:
+        model_quality = "Good"
+    else:
+        model_quality = "Unknown"
+
+    messages: list[str] = []
+    if reliable:
+        messages.append("Reliable models: " + ", ".join(reliable))
+    if failures:
+        messages.append(f"{len(failures)} model/data failure(s) need review.")
+    if warnings and not failures:
+        messages.append(f"{len(warnings)} warning(s) may affect downstream confidence.")
+    if fallbacks:
+        messages.append(f"{len(fallbacks)} fallback path(s) were used.")
+    if not messages:
+        messages.append("No model/data warnings detected in the latest plotted view.")
+
+    return {
+        "overall": model_quality,
+        "model_quality": model_quality,
+        "warnings": len(warnings),
+        "failures": len(failures),
+        "fallbacks": len(fallbacks),
+        "reliable_models": reliable,
+        "primary_model": grid["primary_model"],
+        "rejected_models": grid["rejected_models"],
+        "partially_reliable_models": grid["partially_reliable_models"],
+        "thresholds": grid["thresholds"],
+        "messages": messages,
+    }
 
 
 def _expiry_quality(entry: dict[str, Any]) -> str:
@@ -333,6 +553,7 @@ class ParametersTab(ttk.Frame):
         }
         key = key_map.get(col, lambda r: 0)
         sorted_rows = sorted(self._rows, key=key, reverse=not self._sort_asc)
+        self._rows = sorted_rows
         self._clear_tree()
         self._insert_rows(sorted_rows)
 
@@ -342,7 +563,7 @@ class ParametersTab(ttk.Frame):
 
 
 class DiagnosticsTab(ParametersTab):
-    """Settings/Status diagnostics table for model and data-integrity details."""
+    """Runtime diagnostics table for model, weight, and data-integrity details."""
 
     _COLS = (
         "Ticker", "As Of", "DTE", "Expiry", "Model", "Status", "Fallback",
@@ -358,7 +579,7 @@ class DiagnosticsTab(ParametersTab):
                 r["As Of"],
                 r["DTE"],
                 r["Expiry"],
-                r["Model"],
+                _model_display_name(r["Model"]),
                 r["Status"],
                 r["Fallback"],
                 _pct(r["ATM Vol"]),
@@ -414,5 +635,323 @@ class DiagnosticsTab(ParametersTab):
         }
         key = key_map.get(col, lambda r: 0)
         sorted_rows = sorted(self._rows, key=key, reverse=not self._sort_asc)
+        self._rows = sorted_rows
         self._clear_tree()
         self._insert_rows(sorted_rows)
+
+
+class SystemHealthTab(ttk.Frame):
+    """System integrity dashboard for data/model health and downstream trust."""
+
+    def __init__(self, master, *, on_open_expiry=None, on_open_signals=None):
+        super().__init__(master)
+        self._on_open_expiry = on_open_expiry
+        self._on_open_signals = on_open_signals
+        self._rows: list[dict[str, Any]] = []
+        self._details_visible = True
+        self._selected_expiry: dict[str, Any] | None = None
+        self._grid_rows: list[dict[str, Any]] = []
+        self._grid_expiries: list[dict[str, Any]] = []
+        self._build_ui()
+
+    def _build_ui(self):
+        intro = ttk.Label(
+            self,
+            text=(
+                "System Health summarizes whether data, model fits, fallbacks, and weights "
+                "are trustworthy enough to support RV Signals."
+            ),
+            anchor="w",
+            foreground="gray35",
+            wraplength=1100,
+        )
+        intro.pack(fill=tk.X, padx=8, pady=(8, 4))
+
+        summary = ttk.LabelFrame(self, text="Summary")
+        summary.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self.summary_labels: dict[str, ttk.Label] = {}
+        specs = [
+            ("primary_model", "Primary model"),
+            ("rejected_models", "Rejected models"),
+            ("partially_reliable_models", "Partially reliable"),
+            ("overall", "Overall"),
+            ("warnings", "Warnings"),
+            ("fallbacks", "Fallbacks"),
+        ]
+        for i, (key, title) in enumerate(specs):
+            frame = ttk.Frame(summary, padding=(6, 4))
+            frame.grid(row=i // 3, column=i % 3, sticky="ew", padx=4, pady=3)
+            ttk.Label(frame, text=title).pack(anchor="w")
+            lbl = ttk.Label(frame, text="—", wraplength=320)
+            lbl.pack(anchor="w", fill=tk.X)
+            self.summary_labels[key] = lbl
+        for col in range(3):
+            summary.columnconfigure(col, weight=1)
+
+        msg_box = ttk.LabelFrame(self, text="Interpretation")
+        msg_box.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self.txt_messages = tk.Text(msg_box, height=4, wrap="word", relief="flat", padx=8, pady=6)
+        self.txt_messages.pack(fill=tk.X, expand=False)
+        self.txt_messages.configure(state=tk.DISABLED)
+
+        grid_box = ttk.LabelFrame(self, text="Model Health Grid")
+        grid_box.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self.model_grid = ttk.Treeview(grid_box, columns=("Model",), show="headings", height=3, selectmode="browse")
+        self.model_grid.heading("Model", text="Model")
+        self.model_grid.column("Model", width=90, anchor=tk.W, stretch=False)
+        self.model_grid.pack(fill=tk.X, padx=6, pady=(6, 2))
+        self.model_grid.bind("<<TreeviewSelect>>", self._on_model_grid_selected)
+        self.model_grid.bind("<ButtonRelease-1>", self._on_model_grid_click)
+        self.model_grid.bind("<Double-1>", self._on_model_grid_double_click)
+        self.lbl_grid_reason = ttk.Label(
+            grid_box,
+            text=f"Status threshold: degraded when RMSE > {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}. Select a cell for reason.",
+            anchor="w",
+            foreground="gray35",
+            wraplength=1100,
+        )
+        self.lbl_grid_reason.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+        feature_box = ttk.LabelFrame(self, text="Feature Health")
+        feature_box.pack(fill=tk.BOTH, expand=False, padx=8, pady=(0, 6))
+        self.feature_summary = ttk.Label(feature_box, text="No feature diagnostics available.", anchor="w", wraplength=1100)
+        self.feature_summary.pack(fill=tk.X, padx=6, pady=(6, 2))
+        self.feature_warnings = ttk.Label(feature_box, text="", anchor="w", foreground="firebrick", wraplength=1100)
+        self.feature_warnings.pack(fill=tk.X, padx=6, pady=(0, 4))
+
+        feature_tables = ttk.Frame(feature_box)
+        feature_tables.pack(fill=tk.X, padx=6, pady=(0, 6))
+        feature_tables.columnconfigure(0, weight=1)
+        feature_tables.columnconfigure(1, weight=1)
+
+        self.feature_dist = ttk.Treeview(
+            feature_tables,
+            columns=("Ticker", "Coverage", "Mean", "Std", "Min", "Max"),
+            show="headings",
+            height=5,
+        )
+        for col, width in (("Ticker", 70), ("Coverage", 80), ("Mean", 80), ("Std", 80), ("Min", 80), ("Max", 80)):
+            self.feature_dist.heading(col, text=col)
+            self.feature_dist.column(col, width=width, anchor=tk.CENTER)
+        self.feature_dist.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self.feature_pairs = ttk.Treeview(
+            feature_tables,
+            columns=("Peer", "Corr", "Mean Diff", "Sign %", "Common", "Flag"),
+            show="headings",
+            height=5,
+        )
+        for col, width in (("Peer", 70), ("Corr", 70), ("Mean Diff", 90), ("Sign %", 70), ("Common", 70), ("Flag", 150)):
+            self.feature_pairs.heading(col, text=col)
+            self.feature_pairs.column(col, width=width, anchor=tk.CENTER)
+        self.feature_pairs.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        self.feature_log = ttk.Label(feature_box, text="", anchor="w", foreground="gray35", wraplength=1100)
+        self.feature_log.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+        nav = ttk.Frame(self)
+        nav.pack(fill=tk.X, padx=8, pady=(0, 6))
+        self.btn_open_expiry = ttk.Button(nav, text="Open Expiry in IV Explorer", command=self._open_selected_expiry)
+        self.btn_open_expiry.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_open_signals = ttk.Button(nav, text="Open Related RV Signals", command=self._open_signals)
+        self.btn_open_signals.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_toggle = ttk.Button(nav, text="Hide Detailed Diagnostics", command=self._toggle_details)
+        self.btn_toggle.pack(side=tk.RIGHT)
+
+        self.details = ttk.LabelFrame(self, text="Detailed Diagnostics")
+        self.details.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self.diagnostics = DiagnosticsTab(self.details)
+        self.diagnostics.pack(fill=tk.BOTH, expand=True)
+        self.diagnostics.tree.bind("<<TreeviewSelect>>", self._on_detail_selected)
+        self.diagnostics.tree.bind("<Double-1>", self._on_detail_double_click)
+
+    def update(self, info: Dict[str, Any] | None) -> None:
+        health = summarize_health_info(info)
+        grid = build_model_health_grid(info)
+        self._rows = flatten_diagnostics_info(info)
+        for key, label in self.summary_labels.items():
+            value = health.get(key, "—")
+            if isinstance(value, list):
+                value = ", ".join(value) if value else "None"
+            label.config(text=str(value))
+        self._set_messages(health.get("messages") or [])
+        self._update_model_grid(grid)
+        feature_health = info.get("feature_health") if isinstance(info, dict) else None
+        if not feature_health and isinstance(info, dict) and isinstance(info.get("weight_info"), dict):
+            feature_health = info["weight_info"].get("feature_health")
+        self._update_feature_health(feature_health)
+        self.diagnostics.update(info)
+        self._selected_expiry = None
+
+    def _set_messages(self, messages: list[str]) -> None:
+        text = "\n".join(f"- {m}" for m in messages)
+        self.txt_messages.configure(state=tk.NORMAL)
+        self.txt_messages.delete("1.0", tk.END)
+        self.txt_messages.insert(tk.END, text)
+        self.txt_messages.configure(state=tk.DISABLED)
+
+    def _on_detail_selected(self, _event=None):
+        selected = self.diagnostics.tree.selection()
+        if not selected:
+            self._selected_expiry = None
+            return
+        try:
+            idx = self.diagnostics.tree.index(selected[0])
+            self._selected_expiry = self._rows[idx] if 0 <= idx < len(self._rows) else None
+        except Exception:
+            self._selected_expiry = None
+
+    def _update_model_grid(self, grid: dict[str, Any]) -> None:
+        self._grid_rows = list(grid.get("rows") or [])
+        self._grid_expiries = list(grid.get("expiries") or [])
+        columns = ("Model",) + tuple(exp["label"] for exp in self._grid_expiries)
+        self.model_grid.configure(columns=columns)
+        for col in columns:
+            self.model_grid.heading(col, text=col)
+            self.model_grid.column(
+                col,
+                width=90 if col == "Model" else 115,
+                anchor=tk.W if col == "Model" else tk.CENTER,
+                stretch=True,
+            )
+        for item in self.model_grid.get_children():
+            self.model_grid.delete(item)
+        for i, row in enumerate(self._grid_rows):
+            self.model_grid.insert("", tk.END, iid=str(i), values=[row.get(col, "") for col in columns])
+        if self._grid_rows:
+            self.lbl_grid_reason.config(
+                text=f"Status threshold: degraded when RMSE > {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}. Select a cell for reason."
+            )
+        else:
+            self.lbl_grid_reason.config(text="No model health grid available. Plot an IV view to populate model fit diagnostics.")
+
+    def _grid_cell_context(self, event=None) -> tuple[dict[str, Any] | None, str]:
+        selected = self.model_grid.selection()
+        iid = selected[0] if selected else ""
+        if event is not None:
+            row_id = self.model_grid.identify_row(event.y)
+            if row_id:
+                iid = row_id
+        try:
+            row = self._grid_rows[int(iid)]
+        except Exception:
+            return None, ""
+        col_name = ""
+        if event is not None:
+            col_id = self.model_grid.identify_column(event.x)
+            try:
+                col_name = self.model_grid["columns"][int(col_id.replace("#", "")) - 1]
+            except Exception:
+                col_name = ""
+        if not col_name or col_name == "Model":
+            for exp in self._grid_expiries:
+                label = exp["label"]
+                if row.get("_statuses", {}).get(label) in {"degraded", "failed"}:
+                    col_name = label
+                    break
+            if not col_name and self._grid_expiries:
+                col_name = self._grid_expiries[0]["label"]
+        return row, col_name
+
+    def _on_model_grid_selected(self, event=None):
+        row, col_name = self._grid_cell_context(event)
+        if not row or not col_name:
+            return
+        reason = row.get("_reasons", {}).get(col_name, "")
+        status = row.get("_statuses", {}).get(col_name, "")
+        model = row.get("Model", "")
+        self.lbl_grid_reason.config(text=f"{model} {col_name}: {status or 'unknown'} - {reason or 'No reason recorded.'}")
+        for exp in self._grid_expiries:
+            if exp["label"] == col_name:
+                self._selected_expiry = {"DTE": exp.get("dte"), "Expiry": exp.get("expiry")}
+                break
+
+    def _on_model_grid_click(self, event):
+        self._on_model_grid_selected(event)
+
+    def _on_model_grid_double_click(self, event):
+        row, col_name = self._grid_cell_context(event)
+        if row and col_name and col_name != "Model":
+            self._on_model_grid_selected(event)
+            self._open_selected_expiry()
+
+    def _update_feature_health(self, feature_health: dict[str, Any] | None) -> None:
+        for tree in (self.feature_dist, self.feature_pairs):
+            for item in tree.get_children():
+                tree.delete(item)
+
+        if not isinstance(feature_health, dict) or not feature_health.get("available"):
+            self.feature_summary.config(text="No feature diagnostics available. Plot the Relative Weight Matrix to inspect feature construction.")
+            self.feature_warnings.config(text="")
+            self.feature_log.config(text="")
+            return
+
+        summary = feature_health.get("summary") or {}
+        alignment = feature_health.get("alignment") or {}
+        self.feature_summary.config(
+            text=(
+                f"Feature: {summary.get('feature_set', 'unknown')} | "
+                f"Grid: {summary.get('coordinate_system', 'unknown')} | "
+                f"Points: {summary.get('total_points', 0)} | "
+                f"Normalization: {summary.get('normalization', 'unknown')} | "
+                f"Shared grid: {'yes' if alignment.get('shared_grid') else 'no'} | "
+                f"Sparse points: {alignment.get('sparse_points', 0)}"
+            )
+        )
+        warnings = feature_health.get("warnings") or []
+        self.feature_warnings.config(
+            text=("Warnings: " + " ".join(str(w) for w in warnings))
+            if warnings
+            else "Warnings: none detected."
+        )
+
+        for row in feature_health.get("distribution") or []:
+            self.feature_dist.insert("", tk.END, values=(
+                row.get("ticker", ""),
+                _pct(row.get("coverage")),
+                _fmt(row.get("mean"), ".4f"),
+                _fmt(row.get("std"), ".4f"),
+                _fmt(row.get("min"), ".4f"),
+                _fmt(row.get("max"), ".4f"),
+            ))
+        for row in feature_health.get("pairs") or []:
+            self.feature_pairs.insert("", tk.END, values=(
+                row.get("ticker", ""),
+                _fmt(row.get("correlation"), ".3f"),
+                _fmt(row.get("mean_difference"), ".4f"),
+                _pct(row.get("sign_consistency")),
+                row.get("common_points", ""),
+                row.get("flag", ""),
+            ))
+        self.feature_log.config(text="Pipeline: " + " → ".join(str(x) for x in feature_health.get("transformation_log") or []))
+
+    def _open_selected_expiry(self):
+        if callable(self._on_open_expiry):
+            self._on_open_expiry(self._selected_expiry)
+
+    def _open_signals(self):
+        if callable(self._on_open_signals):
+            self._on_open_signals(self._selected_expiry)
+
+    def _on_detail_double_click(self, event):
+        region = self.diagnostics.tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+        col_id = self.diagnostics.tree.identify_column(event.x)
+        try:
+            col_name = self.diagnostics.tree["columns"][int(col_id.replace("#", "")) - 1]
+        except Exception:
+            col_name = ""
+        if col_name in {"Expiry", "DTE"}:
+            self._on_detail_selected()
+            self._open_selected_expiry()
+
+    def _toggle_details(self):
+        if self._details_visible:
+            self.details.pack_forget()
+            self.btn_toggle.config(text="Show Detailed Diagnostics")
+            self._details_visible = False
+        else:
+            self.details.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+            self.btn_toggle.config(text="Hide Detailed Diagnostics")
+            self._details_visible = True

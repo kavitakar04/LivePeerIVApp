@@ -197,7 +197,7 @@ def _reserve_correlation_layout(
     ax: plt.Axes,
     *,
     has_weights: bool,
-) -> tuple[plt.Axes, Optional[plt.Axes], Optional[plt.Axes]]:
+) -> tuple[plt.Axes, Optional[plt.Axes]]:
     """Lay out the heatmap and optional side panels in non-overlapping slots."""
     fig = ax.figure
     if not hasattr(fig, "_orig_position"):
@@ -211,11 +211,11 @@ def _reserve_correlation_layout(
         side_x = main.x1 + 0.105
         side_w = max(0.12, 0.96 - side_x)
         weight_ax = fig.add_axes([side_x, main.y0 + main.height * 0.24, side_w, main.height * 0.52])
-        return ax, weight_ax, None
+        return ax, weight_ax
 
     if hasattr(fig, "_orig_position"):
         ax.set_position(fig._orig_position)
-    return ax, None, None
+    return ax, None
 
 
 def plot_correlation_details(
@@ -276,7 +276,7 @@ def plot_correlation_details(
     coverage = view_data.coverage if view_data is not None else _coverage_by_ticker(corr_df, atm_df)
     overlap = view_data.overlap if view_data is not None else _overlap_counts(corr_df, atm_df)
     has_weights = bool(weights is not None and not weights.dropna().empty)
-    _, weight_ax, cov_ax = _reserve_correlation_layout(
+    _, weight_ax = _reserve_correlation_layout(
         ax,
         has_weights=has_weights,
     )
@@ -294,7 +294,10 @@ def plot_correlation_details(
     else:
         method_label, basis_label = _split_weight_mode(weight_mode)
     max_exp_label = f"{int(max_expiries)}" if max_expiries else "available"
-    context_parts = [f"ATM IV expiry ranks, first {max_exp_label} expiries"]
+    feature_diag = view_data.context.get("feature_diagnostics", {}) if view_data is not None else {}
+    coord = feature_diag.get("coordinate_system") or f"ATM IV expiry ranks, first {max_exp_label} expiries"
+    display_method = view_data.context.get("similarity_display_method", "corr") if view_data is not None else "corr"
+    context_parts = [str(coord)]
     context_parts.append(f"finite cells {finite_count}/{total_elements} ({data_quality:.0%})")
     if min_overlap is not None:
         context_parts.append(f"min overlap {min_overlap}")
@@ -321,7 +324,11 @@ def plot_correlation_details(
         bbox = ax.get_position()
         cax = fig.add_axes([bbox.x1 + 0.01, bbox.y0, 0.012, bbox.height])
         cbar = fig.colorbar(im, cax=cax)
-        cbar.set_label("Correlation")
+        cbar_labels = {
+            "cosine": "Cosine similarity",
+            "pca": "PCA score similarity",
+        }
+        cbar.set_label(cbar_labels.get(display_method, "Correlation"))
         cbar.ax.tick_params(labelsize=8)
         fig._correlation_colorbar = cbar
         fig._corr_colorbar_ax = cax
@@ -332,7 +339,7 @@ def plot_correlation_details(
     ax.set_yticks(range(len(corr_df.index)))
     ax.set_xticklabels(corr_df.columns, rotation=45, ha="right", fontsize=9)
     ax.set_yticklabels(corr_df.index, fontsize=9)
-    title = "Expiry-Rank ATM IV Correlation"
+    title = f"{basis_label} {display_method.title()} Matrix"
     if target:
         title = f"{target.upper()} Peer Similarity - {title}"
     ax.set_title(title, pad=22)

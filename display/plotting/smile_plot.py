@@ -11,7 +11,7 @@ from volModel.sviFit import svi_smile_iv
 from volModel.sabrFit import sabr_smile_iv
 from volModel.polyFit import tps_smile_iv
 from analysis.confidence_bands import Bands
-from display.plotting.anim_utils import  add_legend_toggles
+from display.plotting.legend_utils import add_legend_toggles
 
 ModelName = Literal["svi", "sabr", "tps"]
 
@@ -154,7 +154,20 @@ def fit_and_plot_smile(
         # Only create legend if there are labeled artists
         handles, labels = ax.get_legend_handles_labels()
         if handles and labels:
-            ax.legend(loc="best", fontsize=8)
+            if len(labels) >= 5:
+                if len(ax.figure.axes) == 1:
+                    ax.figure.subplots_adjust(right=0.78)
+                ax.legend(
+                    loc="upper left",
+                    bbox_to_anchor=(1.01, 1.0),
+                    borderaxespad=0.0,
+                    fontsize=8,
+                    framealpha=0.92,
+                )
+            else:
+                if len(ax.figure.axes) == 1:
+                    ax.figure.subplots_adjust(right=0.94)
+                ax.legend(loc="upper right", fontsize=8, framealpha=0.92)
 
     # ---- legend-first toggle system (primary), keyboard helpers
     if enable_toggles and series_map and ax.figure is not None:
@@ -196,4 +209,3 @@ def plot_peer_composite_smile(
         ax.legend(handles, labels, loc="best", fontsize=8)
 
     return bands
-

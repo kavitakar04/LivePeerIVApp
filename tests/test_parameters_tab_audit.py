@@ -1,4 +1,12 @@
-from display.gui.parameters_tab import flatten_diagnostics_info, flatten_fit_info
+import pandas as pd
+
+from analysis.feature_health import summarize_feature_health
+from display.gui.parameters_tab import (
+    build_model_health_grid,
+    flatten_diagnostics_info,
+    flatten_fit_info,
+    summarize_health_info,
+)
 
 
 def _sample_info():
@@ -98,3 +106,53 @@ def test_diagnostics_info_includes_peer_weights_and_status_events():
     assert rows[0]["Params"] == "peer=RGTI"
     assert rows[1]["Model"] == "weight"
     assert rows[1]["Fallback"] == "equal"
+
+
+def test_system_health_summary_surfaces_failures_and_reliable_models():
+    health = summarize_health_info(_sample_info())
+
+    assert health["overall"] == "Degraded"
+    assert health["failures"] == 1
+    assert health["primary_model"] == "SVI"
+    assert "SVI" in health["reliable_models"]
+    assert "TPS" in health["reliable_models"]
+    assert any("failure" in msg for msg in health["messages"])
+
+
+def test_model_health_grid_pivots_models_by_expiry():
+    health = build_model_health_grid(_sample_info())
+
+    assert [exp["label"] for exp in health["expiries"]] == ["30d"]
+    rows = {row["Model"]: row for row in health["rows"]}
+    assert rows["SVI"]["30d"] == "✅ ok"
+    assert rows["SABR"]["30d"] == "⚠ degraded"
+    assert rows["SABR"]["_reasons"]["30d"] == "RMSE too high"
+    assert rows["TPS"]["30d"] == "✅ ok"
+    assert health["primary_model"] == "SVI"
+
+
+def test_feature_health_summarizes_grid_distribution_and_pairs():
+    features = pd.DataFrame(
+        [
+            [0.20, 0.21, 0.22, 0.23],
+            [0.19, 0.20, 0.21, 0.22],
+            [0.80, 0.10, 0.80, 0.10],
+        ],
+        index=["TGT", "P1", "P2"],
+        columns=["T30_0.90-1.00", "T30_1.00-1.10", "T60_0.90-1.00", "T60_1.00-1.10"],
+    )
+    features.attrs["feature_diagnostics"] = {
+        "feature_set": "surface_grid",
+        "coordinate_system": "standardized_tenor_grid_x_moneyness_bin",
+        "normalization": "column_zscore",
+        "missing_policy": "column median imputation before grid standardization",
+    }
+
+    health = summarize_feature_health(features, target="TGT")
+
+    assert health["available"] is True
+    assert health["summary"]["total_points"] == 4
+    assert health["alignment"]["shared_grid"] is True
+    assert health["distribution"][0]["ticker"] == "TGT"
+    assert health["pairs"][0]["ticker"] == "P1"
+    assert "normalized using column_zscore" in health["transformation_log"]

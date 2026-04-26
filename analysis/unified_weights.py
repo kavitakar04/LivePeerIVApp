@@ -60,8 +60,8 @@ class WeightMethod(Enum):
 class FeatureSet(Enum):
     ATM = "iv_atm"                    # options ATM features
     ATM_RANKS = "iv_atm_ranks"        # pillar-free ATM by expiry rank
-    SURFACE = "surface"               # options surface (flattened grid)
-    SURFACE_VECTOR = "surface_grid"   # alias of SURFACE
+    SURFACE = "surface"               # market-native expiry-rank x moneyness-bin surface
+    SURFACE_VECTOR = "surface_grid"   # standardized tenor-grid x moneyness-bin surface
     UNDERLYING_PX = "ul"              # underlying price returns (time-series)
 
 # -----------------------------------------------------------------------------
@@ -152,6 +152,38 @@ class WeightDiagnostics:
             "clipped": self.clipped_count,
             "fallback": self.fallback,
             "issues": self.issues,
+        }
+
+
+@dataclass(frozen=True)
+class FeatureDiagnostics:
+    feature_set: str
+    coordinate_system: str
+    value_type: str
+    shape: tuple[int, int]
+    tickers_requested: list[str]
+    tickers_included: list[str]
+    tickers_excluded: list[str]
+    missing_policy: str
+    normalization: str
+    asof: Optional[str] = None
+    n_expiries: Optional[int] = None
+    n_grid_points: Optional[int] = None
+
+    def as_log_dict(self) -> dict[str, Any]:
+        return {
+            "feature_set": self.feature_set,
+            "coordinate_system": self.coordinate_system,
+            "value_type": self.value_type,
+            "shape": self.shape,
+            "tickers_requested": self.tickers_requested,
+            "tickers_included": self.tickers_included,
+            "tickers_excluded": self.tickers_excluded,
+            "missing_policy": self.missing_policy,
+            "normalization": self.normalization,
+            "asof": self.asof,
+            "n_expiries": self.n_expiries,
+            "n_grid_points": self.n_grid_points,
         }
 
 # -----------------------------------------------------------------------------
@@ -321,6 +353,12 @@ def _log_weight_diagnostics(diag: WeightDiagnostics, level: int = logging.INFO) 
     logger.log(level, "weight diagnostics: %s", diag.as_log_dict())
 
 
+def _attach_output_diagnostics(weights: pd.Series, feature_df: pd.DataFrame, diag: WeightDiagnostics) -> pd.Series:
+    weights.attrs["feature_diagnostics"] = dict(getattr(feature_df, "attrs", {}).get("feature_diagnostics", {}))
+    weights.attrs["weight_diagnostics"] = diag.as_log_dict()
+    return weights
+
+
 def atm_feature_matrix(
     tickers: Iterable[str],
     asof: str,
@@ -376,6 +414,47 @@ def _atm_rank_feature_matrix(
     return atm_df, list(atm_df.columns)
 
 
+def native_surface_feature_matrix(
+    tickers: Iterable[str],
+    asof: str,
+    *,
+    max_expiries: int = DEFAULT_MAX_EXPIRIES,
+    mny_bins: Iterable[Tuple[float, float]] | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Market-native surface features: expiry rank x moneyness bin IV levels."""
+    from analysis.analysis_pipeline import get_smile_slices_batch
+    from analysis.peer_composite_builder import DEFAULT_MNY_BINS
+
+    tickers_up = [str(t).upper() for t in tickers]
+    bins = tuple(tuple(b) for b in (mny_bins or DEFAULT_MNY_BINS))
+    labels = [f"{lo:.2f}-{hi:.2f}" for lo, hi in bins]
+    edges = [bins[0][0]] + [hi for _, hi in bins]
+    feature_names = [f"rank{rank}_{label}" for rank in range(int(max_expiries)) for label in labels]
+    slices = get_smile_slices_batch(tickers_up, asof, max_expiries=max_expiries)
+
+    rows: list[pd.Series] = []
+    for ticker in tickers_up:
+        df = slices.get(ticker, pd.DataFrame())
+        values = {name: np.nan for name in feature_names}
+        if df is not None and not df.empty and {"T", "moneyness", "sigma"}.issubset(df.columns):
+            d = df.copy()
+            d["T"] = pd.to_numeric(d["T"], errors="coerce")
+            d["moneyness"] = pd.to_numeric(d["moneyness"], errors="coerce")
+            d["sigma"] = pd.to_numeric(d["sigma"], errors="coerce")
+            d = d.dropna(subset=["T", "moneyness", "sigma"]).sort_values("T")
+            Ts = np.sort(d["T"].unique())[: int(max_expiries)]
+            for rank, T_val in enumerate(Ts):
+                g = d.loc[np.isclose(d["T"], T_val)].copy()
+                if g.empty:
+                    continue
+                g["mny_bin"] = pd.cut(g["moneyness"], bins=edges, labels=labels, include_lowest=True)
+                cell = g.dropna(subset=["mny_bin"]).groupby("mny_bin", observed=True)["sigma"].mean()
+                for label, value in cell.items():
+                    values[f"rank{rank}_{label}"] = float(value)
+        rows.append(pd.Series(values, name=ticker))
+    return pd.DataFrame(rows), feature_names
+
+
 def surface_feature_matrix(
     tickers: Iterable[str],
     asof: str,
@@ -395,6 +474,7 @@ def surface_feature_matrix(
 
     _tenors = tuple(int(t) for t in tenors) if tenors else DEFAULT_TENORS
     _mny_bins = tuple(tuple(b) for b in mny_bins) if mny_bins else DEFAULT_MNY_BINS
+    mny_labels = [f"{lo:.2f}-{hi:.2f}" for lo, hi in _mny_bins]
     cfg = PipelineConfig(tenors=_tenors, mny_bins=_mny_bins)
     key = ",".join(sorted(req))
 
@@ -420,10 +500,11 @@ def surface_feature_matrix(
             )
             continue
         df = grids[t][asof_ts]  # index=mny labels, columns=tenor (days)
-        logger.debug("Ticker %s surface grid shape %s", t, df.shape)
+        df = df.reindex(index=mny_labels, columns=list(_tenors))
+        logger.debug("Ticker %s surface grid aligned shape %s", t, df.shape)
         arr = df.to_numpy(float).T.reshape(-1)
         if feat_names is None:
-            feat_names = [f"T{c}_{r}" for c in df.columns for r in df.index]
+            feat_names = [f"T{c}_{r}" for c in _tenors for r in mny_labels]
         feats.append(arr)
         ok.append(t)
 
@@ -692,6 +773,7 @@ class UnifiedWeightComputer:
         peers_list = [p.upper() for p in peers]
         if not peers_list:
             return pd.Series(dtype=float)
+        feature_df = None
 
         def fallback(
             reason: str,
@@ -714,6 +796,9 @@ class UnifiedWeightComputer:
                 rejected_weights=rejected_weights,
             )
             _log_weight_diagnostics(diag, logging.WARNING)
+            if feature_df is not None:
+                w_eq.attrs["feature_diagnostics"] = dict(getattr(feature_df, "attrs", {}).get("feature_diagnostics", {}))
+            w_eq.attrs["weight_diagnostics"] = diag.as_log_dict()
             return w_eq
 
         # Equal weights
@@ -760,27 +845,41 @@ class UnifiedWeightComputer:
         # Build features
         feature_df = self._build_feature_matrix(target, peers_list, asof, config)
         if feature_df is None or feature_df.empty:
-            if config.feature_set != FeatureSet.UNDERLYING_PX:
-                logger.warning(
-                    "Feature matrix for %s empty; falling back to underlying returns",
-                    config.feature_set,
-                )
-                ul_cfg = WeightConfig(
-                    method=config.method,
-                    feature_set=FeatureSet.UNDERLYING_PX,
-                    clip_negative=config.clip_negative,
-                    power=config.power,
-                )
-                feature_df = self._build_feature_matrix(target, peers_list, None, ul_cfg)
-                if feature_df is None or feature_df.empty:
-                    logger.warning("Underlying returns also unavailable; using equal weights")
-                    return fallback("empty options and underlying feature matrices")
-                config = ul_cfg
-            else:
-                logger.warning("Underlying return features empty; using equal weights")
-                return fallback("empty underlying feature matrix")
+            return fallback(f"empty {config.feature_set.value} feature matrix")
 
-        # Dispatch by method
+        return self._compute_weights_from_features(feature_df, target, peers_list, config)
+
+    def _compute_weights_from_features(
+        self,
+        feature_df: pd.DataFrame,
+        target: str,
+        peers_list: list[str],
+        config: WeightConfig,
+    ) -> pd.Series:
+        """Compute weights from an already-built, contract-tagged feature matrix."""
+        def fallback(
+            reason: str,
+            condition_number: Optional[float] = None,
+            input_shape: Optional[tuple[int, ...]] = None,
+            rejected_weights: Optional[pd.Series] = None,
+        ) -> pd.Series:
+            w_eq = self._fallback_equal(peers_list)
+            w_eq.attrs["weight_warning"] = f"{config.method.value} weights failed validation; using equal weights ({reason})"
+            diag = _diagnose_weights(
+                w_eq,
+                config=config,
+                peers=peers_list,
+                input_shape=input_shape or (len(peers_list),),
+                normalization="sum",
+                normalization_scale=float(w_eq.sum()),
+                condition_number=condition_number,
+                fallback="equal",
+                issues=[reason],
+                rejected_weights=rejected_weights,
+            )
+            _log_weight_diagnostics(diag, logging.WARNING)
+            return w_eq
+
         try:
             condition_number = None
             attempted_weights: Optional[pd.Series] = None
@@ -803,7 +902,7 @@ class UnifiedWeightComputer:
                     condition_number=condition_number,
                 )
                 _log_weight_diagnostics(diag)
-                return w
+                return _attach_output_diagnostics(w, feature_df, diag)
             if config.method == WeightMethod.COSINE:
                 condition_number = _condition_number(feature_df.to_numpy(float))
                 attempted_weights = cosine_similarity_weights_from_matrix(
@@ -820,7 +919,7 @@ class UnifiedWeightComputer:
                     condition_number=condition_number,
                 )
                 _log_weight_diagnostics(diag)
-                return w
+                return _attach_output_diagnostics(w, feature_df, diag)
             if config.method == WeightMethod.PCA:
                 # PCA regression of target on peers
                 y = _impute_col_median(feature_df.loc[[target]].to_numpy(float)).ravel()
@@ -828,13 +927,26 @@ class UnifiedWeightComputer:
                 if Xp.size == 0:
                     raise ValueError("No peer data available for PCA weighting")
                 condition_number = _condition_number(Xp)
-                w = pca_regress_weights(
-                    Xp,
-                    y,
-                    k=min(Xp.shape[0], Xp.shape[1]),
-                    nonneg=config.clip_negative,
-                    ridge=config.pca_ridge,
-                )
+                try:
+                    from analysis import beta_builder as _beta_builder
+                    pca_fn = getattr(_beta_builder, "pca_regress_weights", pca_regress_weights)
+                except Exception:
+                    pca_fn = pca_regress_weights
+                try:
+                    w = pca_fn(
+                        Xp,
+                        y,
+                        k=min(Xp.shape[0], Xp.shape[1]),
+                        nonneg=config.clip_negative,
+                        ridge=config.pca_ridge,
+                    )
+                except TypeError:
+                    w = pca_fn(
+                        Xp,
+                        y,
+                        k=min(Xp.shape[0], Xp.shape[1]),
+                        nonneg=config.clip_negative,
+                    )
                 ser = pd.Series(w, index=[p for p in peers_list if p in feature_df.index])
                 if config.clip_negative:
                     ser = ser.clip(lower=0.0)
@@ -848,7 +960,7 @@ class UnifiedWeightComputer:
                     condition_number=condition_number,
                 )
                 _log_weight_diagnostics(diag)
-                return ser
+                return _attach_output_diagnostics(ser, feature_df, diag)
             raise ValueError(f"Unsupported method: {config.method}")
         except Exception as e:
             logger.warning("Weight computation failed (%s); using equal weights", e)
@@ -858,6 +970,28 @@ class UnifiedWeightComputer:
                 input_shape=feature_df.shape if feature_df is not None else None,
                 rejected_weights=attempted_weights,
             )
+
+    def _build_surface_features(self, tickers: list[str], asof: Optional[str], config: WeightConfig) -> pd.DataFrame:
+        surface_df, names = native_surface_feature_matrix(
+            tickers,
+            asof,
+            max_expiries=config.max_expiries,
+            mny_bins=config.mny_bins,
+        )
+        self._log_option_counts(tickers, asof, None)
+        self._attach_feature_diagnostics(
+            surface_df,
+            config=config,
+            requested=tickers,
+            asof=asof,
+            coordinate_system="native_expiry_rank_x_moneyness_bin",
+            value_type="iv_levels",
+            missing_policy="column median imputation inside similarity/weights; raw NaNs retained in frame",
+            normalization="none",
+            n_expiries=config.max_expiries,
+            n_grid_points=len(names),
+        )
+        return surface_df
 
     # ---- feature assembly ----
     def _build_feature_matrix(
@@ -877,6 +1011,17 @@ class UnifiedWeightComputer:
                 tol_days=config.atm_tol_days,
             )
             self._log_option_counts(tickers, asof, atm_df)
+            self._attach_feature_diagnostics(
+                atm_df,
+                config=config,
+                requested=tickers,
+                asof=asof,
+                coordinate_system="native_expiry_pillars",
+                value_type="iv_levels",
+                missing_policy="column median imputation for weighting; raw NaNs retained in frame",
+                normalization="none",
+                n_expiries=len(atm_df.columns),
+            )
             return atm_df
         if config.feature_set == FeatureSet.ATM_RANKS:
             atm_df, _ = _atm_rank_feature_matrix(
@@ -886,8 +1031,21 @@ class UnifiedWeightComputer:
                 atm_band=config.atm_band,
             )
             self._log_option_counts(tickers, asof, atm_df)
+            self._attach_feature_diagnostics(
+                atm_df,
+                config=config,
+                requested=tickers,
+                asof=asof,
+                coordinate_system="native_expiry_ranks",
+                value_type="iv_levels",
+                missing_policy="pairwise available ranks; raw NaNs retained in frame",
+                normalization="none",
+                n_expiries=len(atm_df.columns),
+            )
             return atm_df
-        if config.feature_set in (FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+        if config.feature_set == FeatureSet.SURFACE:
+            return self._build_surface_features(tickers, asof, config)
+        if config.feature_set == FeatureSet.SURFACE_VECTOR:
             grids, X, names = surface_feature_matrix(
                 tickers,
                 asof,
@@ -900,14 +1058,70 @@ class UnifiedWeightComputer:
                 list(grids.keys()),
             )
             self._log_option_counts(tickers, asof, None)
-            return pd.DataFrame(X, index=list(grids.keys()), columns=names)
+            out = pd.DataFrame(X, index=list(grids.keys()), columns=names)
+            self._attach_feature_diagnostics(
+                out,
+                config=config,
+                requested=tickers,
+                asof=asof,
+                coordinate_system="standardized_tenor_grid_x_moneyness_bin",
+                value_type="standardized_iv_levels",
+                missing_policy="column median imputation before grid standardization",
+                normalization="column_zscore",
+                n_expiries=len(config.tenors),
+                n_grid_points=len(names),
+            )
+            return out
         if config.feature_set == FeatureSet.UNDERLYING_PX:
             df = underlying_returns_matrix(tickers)
             # Need at least two time rows (pairwise) to compute correlation
             if df.shape[1] < 2:
                 return None
+            self._attach_feature_diagnostics(
+                df,
+                config=config,
+                requested=tickers,
+                asof=None,
+                coordinate_system="calendar_time_series",
+                value_type="underlying_log_returns",
+                missing_policy="pairwise returns; all-NaN dates dropped",
+                normalization="returns",
+                n_grid_points=df.shape[1],
+            )
             return df
         return None
+
+    @staticmethod
+    def _attach_feature_diagnostics(
+        feature_df: pd.DataFrame,
+        *,
+        config: WeightConfig,
+        requested: list[str],
+        asof: Optional[str],
+        coordinate_system: str,
+        value_type: str,
+        missing_policy: str,
+        normalization: str,
+        n_expiries: Optional[int] = None,
+        n_grid_points: Optional[int] = None,
+    ) -> None:
+        included = [str(x).upper() for x in feature_df.index]
+        diag = FeatureDiagnostics(
+            feature_set=config.feature_set.value,
+            coordinate_system=coordinate_system,
+            value_type=value_type,
+            shape=tuple(feature_df.shape),
+            tickers_requested=[str(t).upper() for t in requested],
+            tickers_included=included,
+            tickers_excluded=[str(t).upper() for t in requested if str(t).upper() not in included],
+            missing_policy=missing_policy,
+            normalization=normalization,
+            asof=asof,
+            n_expiries=n_expiries,
+            n_grid_points=n_grid_points,
+        )
+        feature_df.attrs["feature_diagnostics"] = diag.as_log_dict()
+        logger.info("feature diagnostics: %s", diag.as_log_dict())
 
     # ---- OI method ----
     def _open_interest_weights(self, peers_list: list[str], asof: Optional[str]) -> tuple[pd.Series, Optional[float]]:
@@ -980,3 +1194,61 @@ def compute_unified_weights(
     else:
         cfg = mode
     return _weight_computer.compute_weights(target, peers, cfg)
+
+
+def build_weight_feature_matrix(
+    target: str,
+    peers: Iterable[str],
+    mode: Union[str, WeightConfig],
+    **kwargs,
+) -> pd.DataFrame:
+    """Build the exact feature matrix used by unified weights."""
+    if isinstance(mode, str):
+        cfg = WeightConfig.from_mode(mode, **kwargs)
+    else:
+        cfg = mode
+    target = (target or "").upper()
+    peers_list = [str(p).upper() for p in peers]
+    asof = cfg.asof
+    if cfg.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
+        asof = _weight_computer._choose_asof(target, peers_list, cfg)
+    feature_df = _weight_computer._build_feature_matrix(target, peers_list, asof, cfg)
+    if feature_df is None:
+        return pd.DataFrame()
+    return feature_df
+
+
+def similarity_matrix_from_features(feature_df: pd.DataFrame, method: str = "corr") -> pd.DataFrame:
+    """Compute a display similarity matrix from an already-built feature matrix."""
+    if feature_df is None or feature_df.empty:
+        return pd.DataFrame()
+    method = str(method or "corr").lower()
+    df = feature_df.apply(pd.to_numeric, errors="coerce")
+    X = _impute_col_median(df.to_numpy(float))
+    tickers = list(df.index)
+    if method == "cosine":
+        Xc = X - np.nanmean(X, axis=1, keepdims=True)
+        Xc = np.where(np.isfinite(Xc), Xc, 0.0)
+        norms = np.linalg.norm(Xc, axis=1)
+        denom = norms[:, None] * norms[None, :]
+        sim = np.divide(Xc @ Xc.T, denom, out=np.zeros((len(tickers), len(tickers))), where=denom > 1e-12)
+        np.fill_diagonal(sim, 1.0)
+        return pd.DataFrame(sim, index=tickers, columns=tickers)
+    if method == "pca":
+        Xc = X - np.nanmean(X, axis=1, keepdims=True)
+        Xc = np.where(np.isfinite(Xc), Xc, 0.0)
+        try:
+            U, s, _Vt = np.linalg.svd(Xc, full_matrices=False)
+            scores = U * s
+        except Exception:
+            scores = Xc
+        norms = np.linalg.norm(scores, axis=1)
+        denom = norms[:, None] * norms[None, :]
+        sim = np.divide(scores @ scores.T, denom, out=np.zeros((len(tickers), len(tickers))), where=denom > 1e-12)
+        np.fill_diagonal(sim, 1.0)
+        return pd.DataFrame(sim, index=tickers, columns=tickers)
+    corr = pd.DataFrame(X, index=tickers, columns=df.columns).T.corr()
+    corr = corr.replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=-1.0, upper=1.0)
+    for t in corr.index.intersection(corr.columns):
+        corr.loc[t, t] = 1.0
+    return corr

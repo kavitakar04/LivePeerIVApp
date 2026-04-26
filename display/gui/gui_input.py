@@ -65,6 +65,9 @@ from volModel.models import GUI_MODELS
 DEFAULT_PILLARS = list(DEFAULT_PILLAR_DAYS)
 PREFERENCES_PATH = ROOT / "data" / "gui_settings.json"
 PERSISTED_SETTING_KEYS = (
+    "target",
+    "peers",
+    "plot_type",
     "model",
     "T_days",
     "ci",
@@ -93,6 +96,22 @@ WEIGHT_METHOD_LABELS = {
 WEIGHT_METHOD_IDS_BY_LABEL = {label: key for key, label in WEIGHT_METHOD_LABELS.items()}
 WEIGHT_METHOD_DISPLAY = tuple(WEIGHT_METHOD_LABELS[key] for key in WEIGHT_METHODS)
 
+MODEL_LABELS = {
+    "svi": "SVI",
+    "sabr": "SABR",
+    "tps": "TPS",
+}
+MODEL_IDS_BY_LABEL = {label: key for key, label in MODEL_LABELS.items()}
+
+FEATURE_MODE_LABELS = {
+    "iv_atm": "Term Structure",
+    "ul": "Underlying Returns",
+    "surface": "Surface",
+    "surface_grid": "Surface Grid",
+}
+FEATURE_MODE_IDS_BY_LABEL = {label: key for key, label in FEATURE_MODE_LABELS.items()}
+FEATURE_MODE_DISPLAY = tuple(FEATURE_MODE_LABELS[key] for key in ("iv_atm", "ul", "surface", "surface_grid"))
+
 
 def weight_method_label(method: str) -> str:
     return WEIGHT_METHOD_LABELS.get(str(method or "").lower(), str(method or ""))
@@ -106,6 +125,30 @@ def weight_method_id(label_or_method: str) -> str:
     return lowered if lowered in WEIGHT_METHODS else DEFAULT_WEIGHT_METHOD
 
 
+def model_label(model: str) -> str:
+    return MODEL_LABELS.get(str(model or "").lower(), str(model or ""))
+
+
+def model_id(label_or_model: str) -> str:
+    value = str(label_or_model or "").strip()
+    if value in MODEL_IDS_BY_LABEL:
+        return MODEL_IDS_BY_LABEL[value]
+    lowered = value.lower()
+    return lowered if lowered in GUI_MODELS else DEFAULT_MODEL
+
+
+def feature_mode_label(feature_mode: str) -> str:
+    return FEATURE_MODE_LABELS.get(str(feature_mode or "").lower(), str(feature_mode or ""))
+
+
+def feature_mode_id(label_or_mode: str) -> str:
+    value = str(label_or_mode or "").strip()
+    if value in FEATURE_MODE_IDS_BY_LABEL:
+        return FEATURE_MODE_IDS_BY_LABEL[value]
+    lowered = value.lower()
+    return lowered if lowered in FEATURE_MODE_LABELS else DEFAULT_FEATURE_MODE
+
+
 def _load_gui_preferences() -> dict[str, Any]:
     try:
         if not PREFERENCES_PATH.is_file():
@@ -115,6 +158,27 @@ def _load_gui_preferences() -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _persistable_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: _json_safe(settings[key])
+        for key in PERSISTED_SETTING_KEYS
+        if key in settings
+    }
+
+
+def _save_gui_preferences(settings: dict[str, Any], path: Path = PREFERENCES_PATH) -> None:
+    data = _persistable_settings(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        tmp.replace(path)
+    except Exception:
+        pass
 
 
 def _json_safe(value: Any) -> Any:
@@ -185,7 +249,12 @@ def _derive_feature_scope(plot_type: str, feature_mode: str) -> str:
 
 def gui_model_values() -> list[str]:
     """Return user-selectable smile model names."""
-    return list(GUI_MODELS)
+    return [model_label(model) for model in GUI_MODELS]
+
+
+def gui_feature_mode_values() -> list[str]:
+    """Return user-selectable feature mode names."""
+    return list(FEATURE_MODE_DISPLAY)
 
 
 def model_selection_state(plot_type: str, feature_mode: str) -> str:
@@ -222,6 +291,7 @@ class InputPanel(ttk.Frame):
 
         # Central store for current settings
         self.manager = InputManager()
+        self._preferences = _load_gui_preferences()
         
         # Initialize database and create default groups if needed
         self._init_ticker_groups()
@@ -251,11 +321,18 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row1, text="Target").grid(row=0, column=0, sticky="w")
         self.ent_target = ttk.Entry(row1, width=12)
+        if self._preferences.get("target"):
+            self.ent_target.insert(0, str(self._preferences.get("target", "")).upper())
         self.ent_target.grid(row=0, column=1, padx=(4, 10))
         self.ent_target.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row1, text="Peers").grid(row=0, column=2, sticky="w")
         self.ent_peers = ttk.Entry(row1, width=44)
+        pref_peers = self._preferences.get("peers")
+        if isinstance(pref_peers, list):
+            self.ent_peers.insert(0, ", ".join(str(p).upper() for p in pref_peers if str(p).strip()))
+        elif pref_peers:
+            self.ent_peers.insert(0, str(pref_peers))
         self.ent_peers.grid(row=0, column=3, padx=(4, 10))
         self.ent_peers.bind("<KeyRelease>", self._sync_settings)
 
@@ -290,7 +367,8 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row2, text="Plot").grid(row=0, column=2, sticky="w")
         self.cmb_plot = ttk.Combobox(row2, values=PLOT_TYPES, width=21, state="readonly")
-        self.cmb_plot.set(PLOT_TYPES[0])
+        pref_plot = str(self._preferences.get("plot_type") or "")
+        self.cmb_plot.set(pref_plot if pref_plot in PLOT_TYPES else PLOT_TYPES[0])
         self.cmb_plot.grid(row=0, column=3, padx=6)
         self.cmb_plot.bind("<<ComboboxSelected>>", lambda e: (self._sync_settings(), self._refresh_visibility()))
 
@@ -301,21 +379,13 @@ class InputPanel(ttk.Frame):
             width=8,
             state="readonly",
         )
-        self.cmb_model.set(DEFAULT_MODEL)
+        self.cmb_model.set(model_label(str(self._preferences.get("model") or DEFAULT_MODEL)))
         self.cmb_model.grid(row=0, column=5, padx=6)
         self.cmb_model.bind("<<ComboboxSelected>>", self._sync_settings)
 
-        ttk.Label(row2, text="T (days)").grid(row=0, column=6, sticky="w")
-        self.ent_days = ttk.Entry(row2, width=6)
-        self.ent_days.insert(0, "30")
-        self.ent_days.grid(row=0, column=7, padx=6)
-        self.ent_days.bind("<KeyRelease>", self._sync_settings)
-
-        ttk.Label(row2, text="CI (%)").grid(row=0, column=8, sticky="w")
-        self.ent_ci = ttk.Entry(row2, width=6)
-        self.ent_ci.insert(0, f"{ci_percent:.0f}")
-        self.ent_ci.grid(row=0, column=9, padx=6)
-        self.ent_ci.bind("<KeyRelease>", self._sync_settings)
+        # T-days is an internal smile focus used by click-through/drilldown.
+        # The visible expiry controls are Prev/Next Expiry.
+        self.var_T_days = tk.StringVar(value=str(self._preferences.get("T_days") or "30"))
 
         # stub widgets kept for API compatibility (not shown)
         self.cmb_xunits = ttk.Combobox(row2, values=["years", "days"], width=1, state="readonly")
@@ -331,7 +401,7 @@ class InputPanel(ttk.Frame):
             row3, values=WEIGHT_METHOD_DISPLAY,
             width=18, state="readonly",
         )
-        self.cmb_weight_method.set(weight_method_label(DEFAULT_WEIGHT_METHOD))
+        self.cmb_weight_method.set(weight_method_label(str(self._preferences.get("weight_method") or DEFAULT_WEIGHT_METHOD)))
         self.cmb_weight_method.grid(row=0, column=1, padx=6)
         self.cmb_weight_method.bind(
             "<<ComboboxSelected>>",
@@ -340,29 +410,29 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row3, text="Features").grid(row=0, column=2, sticky="w")
         self.cmb_feature_mode = ttk.Combobox(
-            row3, values=["iv_atm", "ul", "surface", "surface_grid"],
-            width=13, state="readonly",
+            row3, values=gui_feature_mode_values(),
+            width=20, state="readonly",
         )
-        self.cmb_feature_mode.set(DEFAULT_FEATURE_MODE)
+        self.cmb_feature_mode.set(feature_mode_label(str(self._preferences.get("feature_mode") or DEFAULT_FEATURE_MODE)))
         self.cmb_feature_mode.grid(row=0, column=3, padx=6)
         self.cmb_feature_mode.bind(
             "<<ComboboxSelected>>",
             lambda e: (self._sync_settings(), self._refresh_visibility(), self._replot_if_weights()),
         )
 
-        self.var_overlay_synth = tk.BooleanVar(value=bool(overlay_synth))
+        self.var_overlay_synth = tk.BooleanVar(value=bool(self._preferences.get("overlay_synth", overlay_synth)))
         self.chk_overlay_synth = ttk.Checkbutton(row3, text="Overlay synth",
                                                   variable=self.var_overlay_synth)
         self.chk_overlay_synth.grid(row=0, column=4, padx=8, sticky="w")
         self.var_overlay_synth.trace_add("write", lambda *args: self._sync_settings())
 
-        self.var_overlay_peers = tk.BooleanVar(value=bool(overlay_peers))
+        self.var_overlay_peers = tk.BooleanVar(value=bool(self._preferences.get("overlay_peers", overlay_peers)))
         self.chk_overlay_peers = ttk.Checkbutton(row3, text="Show individual peers",
                                                   variable=self.var_overlay_peers)
         self.chk_overlay_peers.grid(row=0, column=5, padx=4, sticky="w")
         self.var_overlay_peers.trace_add("write", lambda *args: self._sync_settings())
 
-        self.var_show_term_fit = tk.BooleanVar(value=False)
+        self.var_show_term_fit = tk.BooleanVar(value=bool(self._preferences.get("show_term_fit", False)))
         self.chk_show_term_fit = ttk.Checkbutton(row3, text="Show term fit",
                                                  variable=self.var_show_term_fit)
         self.chk_show_term_fit.grid(row=0, column=6, padx=4, sticky="w")
@@ -372,8 +442,8 @@ class InputPanel(ttk.Frame):
         self.btn_plot.grid(row=0, column=7, padx=12)
 
         # stub vars for API compatibility
-        self.var_weight_power = tk.DoubleVar(value=DEFAULT_WEIGHT_POWER)
-        self.var_clip_negative = tk.BooleanVar(value=DEFAULT_CLIP_NEGATIVE_WEIGHTS)
+        self.var_weight_power = tk.DoubleVar(value=float(self._preferences.get("weight_power", DEFAULT_WEIGHT_POWER)))
+        self.var_clip_negative = tk.BooleanVar(value=bool(self._preferences.get("clip_negative", DEFAULT_CLIP_NEGATIVE_WEIGHTS)))
 
         # =======================
         # Row 4: Analysis settings
@@ -384,33 +454,54 @@ class InputPanel(ttk.Frame):
 
         ttk.Label(row4, text="Max exp").grid(row=0, column=0, sticky="w")
         self.ent_maxexp = ttk.Entry(row4, width=5)
-        self.ent_maxexp.insert(0, str(DEFAULT_MAX_EXPIRIES))
+        self.ent_maxexp.insert(0, str(self._preferences.get("max_expiries", DEFAULT_MAX_EXPIRIES)))
         self.ent_maxexp.grid(row=0, column=1, padx=(4, 10))
         self.ent_maxexp.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row4, text="Pillars").grid(row=0, column=2, sticky="w")
         self.ent_pillars = ttk.Entry(row4, width=22)
-        self.ent_pillars.insert(0, ",".join(str(x) for x in DEFAULT_PILLARS))
+        pref_pillars = self._preferences.get("pillars", DEFAULT_PILLARS)
+        if isinstance(pref_pillars, list):
+            self.ent_pillars.insert(0, ",".join(str(x) for x in pref_pillars))
+        else:
+            self.ent_pillars.insert(0, str(pref_pillars))
         self.ent_pillars.grid(row=0, column=3, padx=(4, 10))
         self.ent_pillars.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row4, text="Tol").grid(row=0, column=4, sticky="w")
         self.ent_pillar_tol = ttk.Entry(row4, width=5)
-        self.ent_pillar_tol.insert(0, f"{DEFAULT_PILLAR_TOLERANCE_DAYS:g}")
+        self.ent_pillar_tol.insert(0, f"{float(self._preferences.get('pillar_tolerance_days', DEFAULT_PILLAR_TOLERANCE_DAYS)):g}")
         self.ent_pillar_tol.grid(row=0, column=5, padx=(4, 10))
         self.ent_pillar_tol.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row4, text="ATM band").grid(row=0, column=6, sticky="w")
         self.ent_atm_band = ttk.Entry(row4, width=6)
-        self.ent_atm_band.insert(0, f"{DEFAULT_ATM_BAND:.2f}")
+        self.ent_atm_band.insert(0, f"{float(self._preferences.get('atm_band', DEFAULT_ATM_BAND)):.2f}")
         self.ent_atm_band.grid(row=0, column=7, padx=(4, 10))
         self.ent_atm_band.bind("<KeyRelease>", self._sync_settings)
 
         ttk.Label(row4, text="Mny bins").grid(row=0, column=8, sticky="w")
         self.ent_mny_bins = ttk.Entry(row4, width=30)
-        self.ent_mny_bins.insert(0, format_moneyness_bins())
+        pref_bins = self._preferences.get("mny_bins")
+        self.ent_mny_bins.insert(0, _format_pref_bins(pref_bins) if pref_bins else format_moneyness_bins())
         self.ent_mny_bins.grid(row=0, column=9, padx=(4, 10))
         self.ent_mny_bins.bind("<KeyRelease>", self._sync_settings)
+
+        ttk.Label(row4, text="CI (%)").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.ent_ci = ttk.Entry(row4, width=6)
+        pref_ci = self._preferences.get("ci")
+        if pref_ci is not None:
+            try:
+                pref_ci_value = float(pref_ci)
+                if pref_ci_value <= 1:
+                    pref_ci_value *= 100.0
+                self.ent_ci.insert(0, f"{pref_ci_value:.0f}")
+            except Exception:
+                self.ent_ci.insert(0, f"{ci_percent:.0f}")
+        else:
+            self.ent_ci.insert(0, f"{ci_percent:.0f}")
+        self.ent_ci.grid(row=1, column=1, padx=(4, 10), pady=(6, 0))
+        self.ent_ci.bind("<KeyRelease>", self._sync_settings)
 
         # initial sync
         self._sync_settings()
@@ -443,6 +534,14 @@ class InputPanel(ttk.Frame):
         self.ent_r.insert(0, f"{r:.4f}")
         self.ent_q.delete(0, tk.END)
         self.ent_q.insert(0, f"{q:.4f}")
+        self._sync_settings()
+
+    def set_T_days(self, days: float) -> None:
+        """Set the internal smile focus tenor used by drilldowns."""
+        try:
+            self.var_T_days.set(str(int(round(float(days)))))
+        except Exception:
+            self.var_T_days.set("30")
         self._sync_settings()
 
     def _parse_rate(self, text: str, default: float) -> float:
@@ -519,11 +618,11 @@ class InputPanel(ttk.Frame):
         return (self.cmb_date.get() or "").strip()
 
     def get_model(self) -> str:
-        return self.cmb_model.get() or DEFAULT_MODEL
+        return model_id(self.cmb_model.get() or DEFAULT_MODEL)
 
     def get_T_days(self) -> float:
         try:
-            return float(self.ent_days.get())
+            return float(self.var_T_days.get())
         except Exception:
             return 30.0
 
@@ -545,7 +644,7 @@ class InputPanel(ttk.Frame):
         return weight_method_id(self.cmb_weight_method.get())
 
     def get_feature_mode(self) -> str:
-        return self.cmb_feature_mode.get() or DEFAULT_FEATURE_MODE
+        return feature_mode_id(self.cmb_feature_mode.get() or DEFAULT_FEATURE_MODE)
 
     def get_weight_power(self) -> float:
         return self.var_weight_power.get()
@@ -620,6 +719,7 @@ class InputPanel(ttk.Frame):
                 max_expiries=self.get_max_exp(),
                 feature_scope=feature_scope,
             )
+            _save_gui_preferences(self.manager.as_dict())
         except Exception:
             # Avoid raising UI errors from sync process
             pass
@@ -634,8 +734,6 @@ class InputPanel(ttk.Frame):
         feat = self.get_feature_mode()
         pid = plot_id(self.get_plot_type())
 
-        show_T = pid == "smile" or (pid == "corr_matrix" and feat in ("iv_atm", "ul"))
-        self.ent_days.configure(state=("normal" if show_T else "disabled"))
         self.cmb_model.configure(state=model_selection_state(pid, feat))
         self.chk_show_term_fit.configure(state=("normal" if pid == "term" else "disabled"))
         self.cmb_feature_mode.configure(

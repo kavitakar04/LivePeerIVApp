@@ -5,6 +5,7 @@ import pytest
 import numpy as np
 import sys
 import os
+import pickle
 
 # Add the project root to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -132,6 +133,17 @@ class TestTPSFit:
             assert len(iv_pred) == 1
             assert np.isfinite(iv_pred[0])
             assert iv_pred[0] > 0  # Should be positive vol
+
+    def test_tps_interpolator_is_pickle_safe(self, sample_iv_data):
+        """TPS params are cached by the GUI, so the interpolator must pickle."""
+        k, iv = sample_iv_data
+        result = fit_tps(k, iv)
+
+        if result["model"] == "tps":
+            restored = pickle.loads(pickle.dumps(result))
+            test_k = np.array([-0.05, 0.0, 0.05])
+
+            assert np.all(np.isfinite(restored["interpolator"](test_k)))
     
     def test_tps_with_smoothing(self, sample_iv_data):
         """Test TPS with different smoothing parameters."""

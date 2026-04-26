@@ -23,7 +23,21 @@ __all__ = [
     "fit_poly",
     "fit_tps_slice",
     "tps_smile_iv",
+    "TPSPredictor",
 ]
+
+
+class TPSPredictor:
+    """Pickle-safe callable wrapper for a fitted TPS interpolator."""
+
+    def __init__(self, rbf):
+        self.rbf = rbf
+
+    def __call__(self, k_new):
+        k_new = np.asarray(k_new, dtype=float)
+        if k_new.ndim == 0:
+            k_new = k_new.reshape(1)
+        return self.rbf(k_new.reshape(-1, 1))
 
 
 def fit_simple_poly(k: np.ndarray, iv: np.ndarray, weights: Optional[np.ndarray] = None,
@@ -131,12 +145,7 @@ def fit_tps(
             smoothing=point_smoothing
         )
         
-        # Create prediction function
-        def predict_iv(k_new):
-            k_new = np.asarray(k_new, dtype=float)
-            if k_new.ndim == 0:
-                k_new = k_new.reshape(1)
-            return rbf(k_new.reshape(-1, 1))
+        predict_iv = TPSPredictor(rbf)
         
         # Get ATM values using finite differences
         atm_vol = float(predict_iv(np.array([0.0]))[0])

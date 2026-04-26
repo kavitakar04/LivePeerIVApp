@@ -6,8 +6,7 @@ Project root: `/Users/kavitakar/LivePeerIVApp`
 ## Storage Map
 
 - Raw options and underlying prices: `data/iv_data.db`
-- GUI/computation cache table: `data/iv_data.db::calc_cache`
-- Background warmup cache target: `data/calculations.db`
+- Calculation cache table: `data/calculations.db::calc_cache`
 - Model parameter history: `data/model_params.parquet`
 - External rate CSVs: `data/ML_Rates/*.csv`
 
@@ -19,8 +18,7 @@ Project root: `/Users/kavitakar/LivePeerIVApp`
 | Underlying closes | `data/iv_data.db::underlying_prices` | `analysis.unified_weights.underlying_returns_matrix` | Used by `ul` feature modes and fallback weights. |
 | Ticker presets | `data/iv_data.db::ticker_groups` | `data.ticker_groups`, `display.gui.gui_input.InputPanel` | GUI universe presets. |
 | Interest rates | `data/iv_data.db::interest_rates`, `ticker_interest_rates` | `data.interest_rates`, GUI rate controls | Used during ingestion/Greek enrichment. |
-| GUI calc cache | `data/iv_data.db::calc_cache` | `analysis.compute_or_load.compute_or_load` | Pickled cached smiles/terms/corr/surface grids; no TTL in current implementation. |
-| Warmup cache | `data/calculations.db::calc_cache` | `analysis.cache_io.WarmupWorker` | Separate cache implementation; schema differs from `analysis.compute_or_load`. |
+| Calculation cache | `data/calculations.db::calc_cache` | `analysis.cache_io.compute_or_load`, `analysis.cache_io.WarmupWorker` | Canonical TTL/versioned cache for computed smiles, terms, correlations, surfaces, and warmup artifacts. |
 | Model params | `data/model_params.parquet` | `analysis.model_params_logger` | Fit parameter history shown in parameter views. |
 
 ## Issues
