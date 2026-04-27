@@ -128,24 +128,26 @@ def _weight_rows(info: Dict[str, Any]) -> list[dict[str, Any]]:
     warning = weight_info.get("warning") or ""
     rows: list[dict[str, Any]] = []
     for peer, weight in sorted(weights.items(), key=lambda item: abs(float(item[1])), reverse=True):
-        rows.append({
-            "Ticker": str(peer),
-            "As Of": asof,
-            "DTE": "",
-            "Expiry": "",
-            "Model": "weight",
-            "Status": mode,
-            "Fallback": "equal" if "using equal weights" in warning else "none",
-            "ATM Vol": None,
-            "Skew": None,
-            "Curvature": None,
-            "RMSE": None,
-            "N": None,
-            "Min IV": None,
-            "Max IV": None,
-            "Reason": warning,
-            "Params": f"{target} peer weight={float(weight):.2%}",
-        })
+        rows.append(
+            {
+                "Ticker": str(peer),
+                "As Of": asof,
+                "DTE": "",
+                "Expiry": "",
+                "Model": "weight",
+                "Status": mode,
+                "Fallback": "equal" if "using equal weights" in warning else "none",
+                "ATM Vol": None,
+                "Skew": None,
+                "Curvature": None,
+                "RMSE": None,
+                "N": None,
+                "Min IV": None,
+                "Max IV": None,
+                "Reason": warning,
+                "Params": f"{target} peer weight={float(weight):.2%}",
+            }
+        )
     return rows
 
 
@@ -159,24 +161,26 @@ def _status_rows(info: Dict[str, Any]) -> list[dict[str, Any]]:
     for event in events:
         if not isinstance(event, dict):
             continue
-        rows.append({
-            "Ticker": event.get("ticker", ticker),
-            "As Of": event.get("asof", asof),
-            "DTE": event.get("dte", ""),
-            "Expiry": event.get("expiry", ""),
-            "Model": event.get("category", "status"),
-            "Status": event.get("status", "info"),
-            "Fallback": event.get("fallback", "none"),
-            "ATM Vol": None,
-            "Skew": None,
-            "Curvature": None,
-            "RMSE": event.get("rmse"),
-            "N": event.get("n"),
-            "Min IV": None,
-            "Max IV": None,
-            "Reason": event.get("message", ""),
-            "Params": event.get("detail", ""),
-        })
+        rows.append(
+            {
+                "Ticker": event.get("ticker", ticker),
+                "As Of": event.get("asof", asof),
+                "DTE": event.get("dte", ""),
+                "Expiry": event.get("expiry", ""),
+                "Model": event.get("category", "status"),
+                "Status": event.get("status", "info"),
+                "Fallback": event.get("fallback", "none"),
+                "ATM Vol": None,
+                "Skew": None,
+                "Curvature": None,
+                "RMSE": event.get("rmse"),
+                "N": event.get("n"),
+                "Min IV": None,
+                "Max IV": None,
+                "Reason": event.get("message", ""),
+                "Params": event.get("detail", ""),
+            }
+        )
     return rows
 
 
@@ -219,24 +223,26 @@ def flatten_diagnostics_info(info: Dict[str, Any] | None) -> list[dict[str, Any]
             else:
                 status = "not_run"
 
-            rows.append({
-                "Ticker": ticker,
-                "As Of": asof,
-                "DTE": dte,
-                "Expiry": expiry,
-                "Model": model_key,
-                "Status": status,
-                "Fallback": fallback_map.get(model_key, "none") if isinstance(fallback_map, dict) else "none",
-                "ATM Vol": sens.get("atm_vol"),
-                "Skew": sens.get("skew"),
-                "Curvature": sens.get("curv"),
-                "RMSE": params.get("rmse", _quality_value(quality, "rmse")),
-                "N": params.get("n", _quality_value(quality, "n")),
-                "Min IV": _quality_value(quality, "min_iv"),
-                "Max IV": _quality_value(quality, "max_iv"),
-                "Reason": _quality_value(quality, "reason", ""),
-                "Params": _params_summary(params),
-            })
+            rows.append(
+                {
+                    "Ticker": ticker,
+                    "As Of": asof,
+                    "DTE": dte,
+                    "Expiry": expiry,
+                    "Model": model_key,
+                    "Status": status,
+                    "Fallback": fallback_map.get(model_key, "none") if isinstance(fallback_map, dict) else "none",
+                    "ATM Vol": sens.get("atm_vol"),
+                    "Skew": sens.get("skew"),
+                    "Curvature": sens.get("curv"),
+                    "RMSE": params.get("rmse", _quality_value(quality, "rmse")),
+                    "N": params.get("n", _quality_value(quality, "n")),
+                    "Min IV": _quality_value(quality, "min_iv"),
+                    "Max IV": _quality_value(quality, "max_iv"),
+                    "Reason": _quality_value(quality, "reason", ""),
+                    "Params": _params_summary(params),
+                }
+            )
 
     return rows
 
@@ -358,19 +364,20 @@ def summarize_health_info(info: Dict[str, Any] | None) -> dict[str, Any]:
         }
 
     warnings = [
-        r for r in rows
-        if str(r.get("Status", "")).lower() in {"warning", "rejected", "failed", "error"}
-        or bool(r.get("Reason"))
+        r
+        for r in rows
+        if str(r.get("Status", "")).lower() in {"warning", "rejected", "failed", "error"} or bool(r.get("Reason"))
     ]
     failures = [r for r in rows if str(r.get("Status", "")).lower() in {"rejected", "failed", "error"}]
     fallbacks = [r for r in rows if str(r.get("Fallback", "none")).lower() not in {"", "none"}]
     model_rows = [r for r in rows if str(r.get("Model", "")).lower() in {"svi", "sabr", "tps", "poly", "poly2"}]
-    reliable = sorted({
-        _model_display_name(r.get("Model"))
-        for r in model_rows
-        if str(r.get("Status", "")).lower() == "ok"
-        and str(r.get("Fallback", "none")).lower() in {"", "none"}
-    })
+    reliable = sorted(
+        {
+            _model_display_name(r.get("Model"))
+            for r in model_rows
+            if str(r.get("Status", "")).lower() == "ok" and str(r.get("Fallback", "none")).lower() in {"", "none"}
+        }
+    )
 
     if failures:
         model_quality = "Degraded"
@@ -440,16 +447,18 @@ def flatten_summary_info(info: Dict[str, Any] | None) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             dte = ""
         sens = entry.get("sens") or {}
-        rows.append({
-            "Ticker": ticker,
-            "As Of": asof,
-            "DTE": dte,
-            "Expiry": _date_part(entry.get("expiry")),
-            "ATM Vol": sens.get("atm_vol"),
-            "Skew": sens.get("skew"),
-            "Curvature": sens.get("curv"),
-            "Fit Quality": _expiry_quality(entry),
-        })
+        rows.append(
+            {
+                "Ticker": ticker,
+                "As Of": asof,
+                "DTE": dte,
+                "Expiry": _date_part(entry.get("expiry")),
+                "ATM Vol": sens.get("atm_vol"),
+                "Skew": sens.get("skew"),
+                "Curvature": sens.get("curv"),
+                "Fit Quality": _expiry_quality(entry),
+            }
+        )
     return rows
 
 
@@ -457,7 +466,14 @@ class ParametersTab(ttk.Frame):
     """User-facing expiry-level fitted surface summary."""
 
     _COLS = (
-        "Ticker", "As Of", "DTE", "Expiry", "ATM Vol", "Skew", "Curvature", "Fit Quality",
+        "Ticker",
+        "As Of",
+        "DTE",
+        "Expiry",
+        "ATM Vol",
+        "Skew",
+        "Curvature",
+        "Fit Quality",
     )
     _WIDTHS = (70, 90, 50, 95, 85, 85, 90, 95)
 
@@ -471,16 +487,14 @@ class ParametersTab(ttk.Frame):
         tbl_frame = ttk.Frame(self)
         tbl_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
-        self.tree = ttk.Treeview(tbl_frame, columns=self._COLS,
-                                  show="headings", height=20, selectmode="browse")
+        self.tree = ttk.Treeview(tbl_frame, columns=self._COLS, show="headings", height=20, selectmode="browse")
         vsb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(tbl_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
         for col, w in zip(self._COLS, self._WIDTHS):
             anchor = tk.W if col in self._left_anchor_columns() else tk.E
-            self.tree.heading(col, text=col,
-                              command=lambda c=col: self._sort_by(c))
+            self.tree.heading(col, text=col, command=lambda c=col: self._sort_by(c))
             self.tree.column(col, anchor=anchor, width=w, stretch=(col in self._stretch_columns()))
 
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -523,16 +537,20 @@ class ParametersTab(ttk.Frame):
 
     def _insert_rows(self, rows):
         for r in rows:
-            self.tree.insert("", tk.END, values=(
-                r["Ticker"],
-                r["As Of"],
-                r["DTE"],
-                r["Expiry"],
-                _pct(r["ATM Vol"]),
-                _pct(r["Skew"]),
-                _fmt(r["Curvature"], ".4f"),
-                r["Fit Quality"],
-            ))
+            self.tree.insert(
+                "",
+                tk.END,
+                values=(
+                    r["Ticker"],
+                    r["As Of"],
+                    r["DTE"],
+                    r["Expiry"],
+                    _pct(r["ATM Vol"]),
+                    _pct(r["Skew"]),
+                    _fmt(r["Curvature"], ".4f"),
+                    r["Fit Quality"],
+                ),
+            )
 
     def _sort_by(self, col: str):
         if self._sort_col == col:
@@ -566,32 +584,49 @@ class DiagnosticsTab(ParametersTab):
     """Runtime diagnostics table for model, weight, and data-integrity details."""
 
     _COLS = (
-        "Ticker", "As Of", "DTE", "Expiry", "Model", "Status", "Fallback",
-        "ATM Vol", "Skew", "Curvature", "RMSE", "N", "Min IV", "Max IV",
-        "Reason", "Params",
+        "Ticker",
+        "As Of",
+        "DTE",
+        "Expiry",
+        "Model",
+        "Status",
+        "Fallback",
+        "ATM Vol",
+        "Skew",
+        "Curvature",
+        "RMSE",
+        "N",
+        "Min IV",
+        "Max IV",
+        "Reason",
+        "Params",
     )
     _WIDTHS = (70, 90, 50, 95, 55, 75, 75, 80, 80, 85, 75, 50, 70, 70, 220, 260)
 
     def _insert_rows(self, rows):
         for r in rows:
-            self.tree.insert("", tk.END, values=(
-                r["Ticker"],
-                r["As Of"],
-                r["DTE"],
-                r["Expiry"],
-                _model_display_name(r["Model"]),
-                r["Status"],
-                r["Fallback"],
-                _pct(r["ATM Vol"]),
-                _pct(r["Skew"]),
-                _fmt(r["Curvature"], ".4f"),
-                _fmt(r["RMSE"], ".5f"),
-                str(r["N"]) if r["N"] is not None else "—",
-                _fmt(r["Min IV"], ".4f"),
-                _fmt(r["Max IV"], ".4f"),
-                r["Reason"] or "",
-                r["Params"] or "",
-            ))
+            self.tree.insert(
+                "",
+                tk.END,
+                values=(
+                    r["Ticker"],
+                    r["As Of"],
+                    r["DTE"],
+                    r["Expiry"],
+                    _model_display_name(r["Model"]),
+                    r["Status"],
+                    r["Fallback"],
+                    _pct(r["ATM Vol"]),
+                    _pct(r["Skew"]),
+                    _fmt(r["Curvature"], ".4f"),
+                    _fmt(r["RMSE"], ".5f"),
+                    str(r["N"]) if r["N"] is not None else "—",
+                    _fmt(r["Min IV"], ".4f"),
+                    _fmt(r["Max IV"], ".4f"),
+                    r["Reason"] or "",
+                    r["Params"] or "",
+                ),
+            )
 
     def update(self, info: Dict[str, Any] | None) -> None:
         self._clear()
@@ -705,7 +740,10 @@ class SystemHealthTab(ttk.Frame):
         self.model_grid.bind("<Double-1>", self._on_model_grid_double_click)
         self.lbl_grid_reason = ttk.Label(
             grid_box,
-            text=f"Status threshold: degraded when RMSE > {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}. Select a cell for reason.",
+            text=(
+                f"Status threshold: degraded when RMSE > {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}. "
+                "Select a cell for reason."
+            ),
             anchor="w",
             foreground="gray35",
             wraplength=1100,
@@ -714,7 +752,9 @@ class SystemHealthTab(ttk.Frame):
 
         feature_box = ttk.LabelFrame(self, text="Feature Health")
         feature_box.pack(fill=tk.BOTH, expand=False, padx=8, pady=(0, 6))
-        self.feature_summary = ttk.Label(feature_box, text="No feature diagnostics available.", anchor="w", wraplength=1100)
+        self.feature_summary = ttk.Label(
+            feature_box, text="No feature diagnostics available.", anchor="w", wraplength=1100
+        )
         self.feature_summary.pack(fill=tk.X, padx=6, pady=(6, 2))
         self.feature_warnings = ttk.Label(feature_box, text="", anchor="w", foreground="firebrick", wraplength=1100)
         self.feature_warnings.pack(fill=tk.X, padx=6, pady=(0, 4))
@@ -741,7 +781,14 @@ class SystemHealthTab(ttk.Frame):
             show="headings",
             height=5,
         )
-        for col, width in (("Peer", 70), ("Corr", 70), ("Mean Diff", 90), ("Sign %", 70), ("Common", 70), ("Flag", 150)):
+        for col, width in (
+            ("Peer", 70),
+            ("Corr", 70),
+            ("Mean Diff", 90),
+            ("Sign %", 70),
+            ("Common", 70),
+            ("Flag", 150),
+        ):
             self.feature_pairs.heading(col, text=col)
             self.feature_pairs.column(col, width=width, anchor=tk.CENTER)
         self.feature_pairs.grid(row=0, column=1, sticky="ew", padx=(4, 0))
@@ -820,10 +867,15 @@ class SystemHealthTab(ttk.Frame):
             self.model_grid.insert("", tk.END, iid=str(i), values=[row.get(col, "") for col in columns])
         if self._grid_rows:
             self.lbl_grid_reason.config(
-                text=f"Status threshold: degraded when RMSE > {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}. Select a cell for reason."
+                text=(
+                    f"Status threshold: degraded when RMSE > {MODEL_RMSE_DEGRADED_THRESHOLD:.2f}. "
+                    "Select a cell for reason."
+                )
             )
         else:
-            self.lbl_grid_reason.config(text="No model health grid available. Plot an IV view to populate model fit diagnostics.")
+            self.lbl_grid_reason.config(
+                text="No model health grid available. Plot an IV view to populate model fit diagnostics."
+            )
 
     def _grid_cell_context(self, event=None) -> tuple[dict[str, Any] | None, str]:
         selected = self.model_grid.selection()
@@ -860,7 +912,9 @@ class SystemHealthTab(ttk.Frame):
         reason = row.get("_reasons", {}).get(col_name, "")
         status = row.get("_statuses", {}).get(col_name, "")
         model = row.get("Model", "")
-        self.lbl_grid_reason.config(text=f"{model} {col_name}: {status or 'unknown'} - {reason or 'No reason recorded.'}")
+        self.lbl_grid_reason.config(
+            text=f"{model} {col_name}: {status or 'unknown'} - {reason or 'No reason recorded.'}"
+        )
         for exp in self._grid_expiries:
             if exp["label"] == col_name:
                 self._selected_expiry = {"DTE": exp.get("dte"), "Expiry": exp.get("expiry")}
@@ -881,7 +935,9 @@ class SystemHealthTab(ttk.Frame):
                 tree.delete(item)
 
         if not isinstance(feature_health, dict) or not feature_health.get("available"):
-            self.feature_summary.config(text="No feature diagnostics available. Plot the Relative Weight Matrix to inspect feature construction.")
+            self.feature_summary.config(
+                text="No feature diagnostics available. Plot the Relative Weight Matrix to inspect feature construction."  # noqa: E501
+            )
             self.feature_warnings.config(text="")
             self.feature_log.config(text="")
             return
@@ -900,30 +956,38 @@ class SystemHealthTab(ttk.Frame):
         )
         warnings = feature_health.get("warnings") or []
         self.feature_warnings.config(
-            text=("Warnings: " + " ".join(str(w) for w in warnings))
-            if warnings
-            else "Warnings: none detected."
+            text=("Warnings: " + " ".join(str(w) for w in warnings)) if warnings else "Warnings: none detected."
         )
 
         for row in feature_health.get("distribution") or []:
-            self.feature_dist.insert("", tk.END, values=(
-                row.get("ticker", ""),
-                _pct(row.get("coverage")),
-                _fmt(row.get("mean"), ".4f"),
-                _fmt(row.get("std"), ".4f"),
-                _fmt(row.get("min"), ".4f"),
-                _fmt(row.get("max"), ".4f"),
-            ))
+            self.feature_dist.insert(
+                "",
+                tk.END,
+                values=(
+                    row.get("ticker", ""),
+                    _pct(row.get("coverage")),
+                    _fmt(row.get("mean"), ".4f"),
+                    _fmt(row.get("std"), ".4f"),
+                    _fmt(row.get("min"), ".4f"),
+                    _fmt(row.get("max"), ".4f"),
+                ),
+            )
         for row in feature_health.get("pairs") or []:
-            self.feature_pairs.insert("", tk.END, values=(
-                row.get("ticker", ""),
-                _fmt(row.get("correlation"), ".3f"),
-                _fmt(row.get("mean_difference"), ".4f"),
-                _pct(row.get("sign_consistency")),
-                row.get("common_points", ""),
-                row.get("flag", ""),
-            ))
-        self.feature_log.config(text="Pipeline: " + " → ".join(str(x) for x in feature_health.get("transformation_log") or []))
+            self.feature_pairs.insert(
+                "",
+                tk.END,
+                values=(
+                    row.get("ticker", ""),
+                    _fmt(row.get("correlation"), ".3f"),
+                    _fmt(row.get("mean_difference"), ".4f"),
+                    _pct(row.get("sign_consistency")),
+                    row.get("common_points", ""),
+                    row.get("flag", ""),
+                ),
+            )
+        self.feature_log.config(
+            text="Pipeline: " + " → ".join(str(x) for x in feature_health.get("transformation_log") or [])
+        )
 
     def _open_selected_expiry(self):
         if callable(self._on_open_expiry):

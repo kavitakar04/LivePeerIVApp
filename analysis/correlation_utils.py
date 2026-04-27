@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Tuple
 from dataclasses import dataclass
 
 from .pillar_selection import build_atm_matrix, detect_available_pillars, EXTENDED_PILLARS_DAYS
@@ -16,36 +16,36 @@ from .settings import (
 @dataclass
 class PillarConfig:
     """Configuration for pillar selection and optimization."""
-    
+
     # Base pillars to use
     base_pillars: List[int] = None
-    
+
     # Pillar selection mode
     use_restricted_pillars: bool = True
     optimize_pillars: bool = False
-    
-    # Optimization parameters  
+
+    # Optimization parameters
     max_pillars: int = 10
     min_tickers_per_pillar: int = 3
-    
+
     # Tolerance for pillar matching
     tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
-    
+
     def __post_init__(self):
         if self.base_pillars is None:
             self.base_pillars = list(DEFAULT_PILLAR_DAYS[:4])
-    
+
     @classmethod
-    def restricted(cls, pillars: List[int] = None) -> 'PillarConfig':
+    def restricted(cls, pillars: List[int] = None) -> "PillarConfig":
         """Create a restricted pillar configuration."""
         return cls(
             base_pillars=pillars or list(DEFAULT_PILLAR_DAYS[:4]),
             use_restricted_pillars=True,
             optimize_pillars=False,
         )
-    
+
     @classmethod
-    def optimized(cls, base_pillars: List[int] = None, max_pillars: int = 8) -> 'PillarConfig':
+    def optimized(cls, base_pillars: List[int] = None, max_pillars: int = 8) -> "PillarConfig":
         """Create an optimized pillar configuration."""
         return cls(
             base_pillars=base_pillars or list(DEFAULT_PILLAR_DAYS[:4]),
@@ -53,9 +53,9 @@ class PillarConfig:
             optimize_pillars=True,
             max_pillars=max_pillars,
         )
-    
+
     @classmethod
-    def extended(cls, base_pillars: List[int] = None, max_pillars: int = 10) -> 'PillarConfig':
+    def extended(cls, base_pillars: List[int] = None, max_pillars: int = 10) -> "PillarConfig":
         """Create an extended pillar configuration without optimization."""
         return cls(
             base_pillars=base_pillars or list(DEFAULT_PILLAR_DAYS[:4]),
@@ -84,25 +84,25 @@ def compute_atm_corr(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Return (ATM matrix, correlation matrix) for one as-of date.
-    
+
     Parameters
     ----------
     use_restricted_pillars : bool, default True
         If True, use only the provided pillars_days.
         If False, optimize pillar selection based on data availability.
-    optimize_pillars : bool, default False  
+    optimize_pillars : bool, default False
         If True and use_restricted_pillars=False, dynamically select the best
         available pillars to maximize data coverage.
     max_pillars : int, default 10
         Maximum number of pillars to use when optimizing.
     """
-    
+
     # Pillar optimization logic
     if not use_restricted_pillars and optimize_pillars:
         # Dynamically detect and optimize pillars based on data availability
         candidate_pillars = list(EXTENDED_PILLARS_DAYS) + list(pillars_days)
         candidate_pillars = sorted(set(candidate_pillars))  # Remove duplicates and sort
-        
+
         # Find pillars with sufficient data coverage
         available_pillars = detect_available_pillars(
             get_smile_slice=get_smile_slice,
@@ -112,18 +112,18 @@ def compute_atm_corr(
             min_tickers_per_pillar=min_tickers_per_pillar,
             tol_days=tol_days,
         )
-        
+
         if available_pillars:
             # Limit to max_pillars, preferring the original pillars if they're available
             original_pillars = [p for p in pillars_days if p in available_pillars]
             additional_pillars = [p for p in available_pillars if p not in pillars_days]
-            
+
             # Start with original pillars, then add additional ones up to max_pillars
             optimized_pillars = original_pillars[:max_pillars]
             remaining_slots = max_pillars - len(optimized_pillars)
             if remaining_slots > 0:
                 optimized_pillars.extend(additional_pillars[:remaining_slots])
-            
+
             pillars_days = sorted(optimized_pillars)
             print(f"Optimized pillars for {asof}: {pillars_days} (from {len(candidate_pillars)} candidates)")
         else:
@@ -133,7 +133,7 @@ def compute_atm_corr(
         extended_pillars = list(EXTENDED_PILLARS_DAYS) + list(pillars_days)
         pillars_days = sorted(set(extended_pillars))[:max_pillars]
         print(f"Using extended pillars for {asof}: {pillars_days}")
-    
+
     # Continue with existing logic
     atm_df, corr_df = build_atm_matrix(
         get_smile_slice=get_smile_slice,
@@ -178,102 +178,92 @@ def compute_atm_corr_optimized(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[int]]:
     """
     Compute ATM correlations with automatic pillar optimization.
-    
+
     Returns
     -------
     atm_df : pd.DataFrame
         ATM matrix (tickers x pillars)
-    corr_df : pd.DataFrame  
+    corr_df : pd.DataFrame
         Correlation matrix (tickers x tickers)
     used_pillars : List[int]
         List of pillars actually used after optimization
     """
     # Set optimization defaults
-    kwargs.setdefault('use_restricted_pillars', False)
-    kwargs.setdefault('optimize_pillars', True) 
-    kwargs.setdefault('max_pillars', 8)
-    
+    kwargs.setdefault("use_restricted_pillars", False)
+    kwargs.setdefault("optimize_pillars", True)
+    kwargs.setdefault("max_pillars", 8)
+
     # Store original pillars for comparison
-    original_pillars = list(base_pillars_days)
-    
+    list(base_pillars_days)
+
     atm_df, corr_df = compute_atm_corr(
-        get_smile_slice=get_smile_slice,
-        tickers=tickers,
-        asof=asof,
-        pillars_days=base_pillars_days,
-        **kwargs
+        get_smile_slice=get_smile_slice, tickers=tickers, asof=asof, pillars_days=base_pillars_days, **kwargs
     )
-    
+
     # Extract used pillars from the ATM dataframe columns
     used_pillars = [int(col) for col in atm_df.columns if str(col).isdigit()]
-    
+
     return atm_df, corr_df, used_pillars
 
 
 def compute_atm_corr_restricted(
     get_smile_slice,
-    tickers: Iterable[str], 
+    tickers: Iterable[str],
     asof: str,
     pillars_days: Iterable[int],
     **kwargs,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Compute ATM correlations using only the specified pillars (restricted mode).
-    
+
     This is equivalent to the original behavior - only use the exact pillars provided.
     """
     # Force restricted pillar usage
-    kwargs['use_restricted_pillars'] = True
-    kwargs['optimize_pillars'] = False
-    
+    kwargs["use_restricted_pillars"] = True
+    kwargs["optimize_pillars"] = False
+
     return compute_atm_corr(
-        get_smile_slice=get_smile_slice,
-        tickers=tickers,
-        asof=asof,
-        pillars_days=pillars_days,
-        **kwargs
+        get_smile_slice=get_smile_slice, tickers=tickers, asof=asof, pillars_days=pillars_days, **kwargs
     )
 
 
 def compute_atm_corr_with_config(
     get_smile_slice,
     tickers: Iterable[str],
-    asof: str, 
+    asof: str,
     config: PillarConfig,
     **kwargs,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[int]]:
     """
     Compute ATM correlations using a PillarConfig.
-    
+
     Returns
     -------
     atm_df : pd.DataFrame
         ATM matrix (tickers x pillars)
     corr_df : pd.DataFrame
-        Correlation matrix (tickers x tickers) 
+        Correlation matrix (tickers x tickers)
     used_pillars : List[int]
         List of pillars actually used
     """
     # Apply config settings to kwargs
-    kwargs.update({
-        'use_restricted_pillars': config.use_restricted_pillars,
-        'optimize_pillars': config.optimize_pillars,
-        'max_pillars': config.max_pillars,
-        'min_tickers_per_pillar': config.min_tickers_per_pillar,
-        'tol_days': config.tol_days,
-    })
-    
-    atm_df, corr_df = compute_atm_corr(
-        get_smile_slice=get_smile_slice,
-        tickers=tickers,
-        asof=asof,
-        pillars_days=config.base_pillars,
-        **kwargs
+    kwargs.update(
+        {
+            "use_restricted_pillars": config.use_restricted_pillars,
+            "optimize_pillars": config.optimize_pillars,
+            "max_pillars": config.max_pillars,
+            "min_tickers_per_pillar": config.min_tickers_per_pillar,
+            "tol_days": config.tol_days,
+        }
     )
-    
+
+    atm_df, corr_df = compute_atm_corr(
+        get_smile_slice=get_smile_slice, tickers=tickers, asof=asof, pillars_days=config.base_pillars, **kwargs
+    )
+
     # Extract used pillars from the ATM dataframe columns
     used_pillars = [int(col) for col in atm_df.columns if str(col).isdigit()]
-    
+
     return atm_df, corr_df, used_pillars
 
 
@@ -287,45 +277,45 @@ def corr_weights(
     """Convert correlations with target into normalised positive weights on peers."""
     target = target.upper()
     peers = [p.upper() for p in peers]
-    
+
     # Debug: Check if target exists in correlation matrix
     if target not in corr_df.columns:
         raise ValueError(f"Target {target} not found in correlation matrix columns: {list(corr_df.columns)}")
-    
+
     # Extract correlations with target
     s = corr_df.reindex(index=peers, columns=[target]).iloc[:, 0].apply(pd.to_numeric, errors="coerce")
-    
+
     # Debug: Check raw correlations
     print(f"Raw correlations for {target} vs {peers}:")
     print(f"  Values: {s.to_dict()}")
     print(f"  NaN count: {s.isna().sum()}")
     print(f"  Valid count: {s.notna().sum()}")
-    
+
     if clip_negative:
         s_before_clip = s.copy()
         s = s.clip(lower=0.0)
         print(f"  After clipping negatives: {s.to_dict()}")
         print(f"  Clipped {(s_before_clip < 0).sum()} negative values")
-    
+
     if power is not None and float(power) != 1.0:
         s_before_power = s.copy()
         s = s.pow(float(power))
         print(f"  After power={power}: {s.to_dict()}")
         print(f"  Power changed {(s_before_power != s).sum()} values")
-    
+
     total = float(s.sum())
     print(f"  Total sum: {total}")
     print(f"  Sum is finite: {np.isfinite(total)}")
     print(f"  Sum > 0: {total > 0}")
-    
+
     if not np.isfinite(total) or total <= 0:
-        print(f"ERROR: Correlation weights computation failed!")
+        print("ERROR: Correlation weights computation failed!")
         print(f"  Correlation matrix shape: {corr_df.shape}")
         print(f"  Available tickers: {list(corr_df.index)}")
         print(f"  Requested peers: {peers}")
         print(f"  Final weights before normalization: {s.to_dict()}")
         raise ValueError("Correlation weights sum to zero or NaN")
-    
+
     return (s / total).fillna(0.0)
 
 
@@ -340,10 +330,10 @@ def flexible_weights(
 ) -> pd.Series:
     """
     Flexible weight computation that adapts to data quality and weight mode.
-    
+
     This function is much more lax with weight modes and determines importance
     based on weights rather than strict correlation requirements.
-    
+
     Parameters
     ----------
     data_df : pd.DataFrame
@@ -360,7 +350,7 @@ def flexible_weights(
         Power to apply to weights before normalization
     min_weight_threshold : float, default 0.01
         Minimum weight threshold for inclusion (helps filter noise)
-    
+
     Returns
     -------
     pd.Series
@@ -403,9 +393,7 @@ def flexible_weights(
             target_norm = np.linalg.norm(target_features)
             if target_norm <= 0:
                 raise ValueError("target feature norm is zero")
-            similarities = peer_features.dot(target_features) / (
-                np.linalg.norm(peer_features, axis=1) * target_norm
-            )
+            similarities = peer_features.dot(target_features) / (np.linalg.norm(peer_features, axis=1) * target_norm)
             weights = pd.Series(similarities, index=peer_features.index)
         weights = weights.reindex(peers).fillna(0.0)
 
@@ -442,15 +430,15 @@ def compute_atm_corr_pillar_free(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Compute ATM correlations without using fixed pillars.
-    
+
     Instead of using fixed pillar days, this function:
     1. Extracts ATM volatility for each available expiry per ticker
     2. Aligns tickers by expiry rank (1st, 2nd, 3rd shortest expiry, etc.)
     3. Computes correlations across expiry ranks
-    
-    This approach uses all available data and doesn't suffer from pillar 
+
+    This approach uses all available data and doesn't suffer from pillar
     alignment issues that can create too many NaNs.
-    
+
     Parameters
     ----------
     get_smile_slice : callable
@@ -469,7 +457,7 @@ def compute_atm_corr_pillar_free(
         Correlation method
     min_periods : int, default 2
         Minimum overlapping observations for correlation
-        
+
     Returns
     -------
     atm_df : pd.DataFrame

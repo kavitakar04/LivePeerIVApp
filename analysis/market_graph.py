@@ -474,7 +474,9 @@ def explain_rv_signal_with_graph(
     )
     if (top["surface_similarity"] > 0).any():
         best = top.sort_values("surface_similarity", ascending=False).iloc[0]
-        bullets.append(f"{best['peer']} has the strongest surface-similarity evidence ({best['surface_similarity']:.2f}).")
+        bullets.append(
+            f"{best['peer']} has the strongest surface-similarity evidence ({best['surface_similarity']:.2f})."
+        )
     if (top["spillover_strength"] > 0).any():
         best = top.sort_values("spillover_strength", ascending=False).iloc[0]
         bullets.append(f"{best['peer']} has the strongest spillover evidence ({best['spillover_strength']:.2f}).")

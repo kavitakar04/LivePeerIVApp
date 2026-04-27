@@ -38,9 +38,7 @@ def _as_float_index(idx) -> list[float]:
     return out
 
 
-def _extract_latest(
-    artifacts: PeerCompositeArtifacts, target: str
-) -> tuple[
+def _extract_latest(artifacts: PeerCompositeArtifacts, target: str) -> tuple[
     Optional[pd.DataFrame],
     Optional[pd.DataFrame],
     Optional[str],
@@ -138,11 +136,7 @@ def show_peer_composite(
 
     # Add RV metrics table as inset
     rv_df = artifacts.rv_metrics
-    if (
-        not rv_df.empty
-        and "asof_date" in rv_df.columns
-        and "pillar_days" in rv_df.columns
-    ):
+    if not rv_df.empty and "asof_date" in rv_df.columns and "pillar_days" in rv_df.columns:
         rv_tail = rv_df.sort_values("asof_date").groupby("pillar_days").tail(1)
     else:
         rv_tail = pd.DataFrame()

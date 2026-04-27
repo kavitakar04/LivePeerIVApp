@@ -16,7 +16,6 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 EXPLANATIONS: dict[tuple[str, str], str] = {
-
     # ── Smile ────────────────────────────────────────────────────────────────
     ("iv_atm", "smile"): (
         "Implied volatility smile fitted to observed option quotes.  "
@@ -30,12 +29,12 @@ EXPLANATIONS: dict[tuple[str, str], str] = {
         "The dashed line is the peer composite interpolated onto the fixed moneyness grid.  "
         "A gap where the target sits above the synthetic means richness relative to peers."
     ),
-
     # ── Term structure ────────────────────────────────────────────────────────
     ("iv_atm", "term"): (
         "ATM implied volatility plotted across expiries.  "
         "Upward slope (contango) is the default regime — longer-dated vol costs more.  "
-        "An inverted (backwardated) curve signals near-term stress: the market expects higher volatility now than later.  "
+        "An inverted (backwardated) curve signals near-term stress: "
+        "the market expects higher volatility now than later.  "
         "Watch the front-end for event risk (earnings, Fed) and the back-end for structural vol-of-vol regime signals."
     ),
     ("surface_grid", "term"): (
@@ -43,7 +42,6 @@ EXPLANATIONS: dict[tuple[str, str], str] = {
         "The dashed line blends peer term structures using full-surface weights.  "
         "Divergence at a specific expiry often points to a single-name event premium."
     ),
-
     # ── Correlation / weight matrix ──────────────────────────────────────────
     ("iv_atm", "corr_matrix"): (
         "Pairwise correlation of ATM implied volatilities ranked by expiry slot.  "
@@ -84,7 +82,6 @@ EXPLANATIONS: dict[tuple[str, str], str] = {
         "Heavily-traded strikes and expiries carry more weight in the similarity computation.  "
         "Useful when OI may lag actual trading activity (e.g. freshly listed options)."
     ),
-
     # ── Synthetic surface ─────────────────────────────────────────────────────
     ("iv_atm", "synthetic_surface"): (
         "Three-panel IV surface view: target (left), weighted peer composite (middle), spread (right).  "
@@ -104,7 +101,6 @@ EXPLANATIONS: dict[tuple[str, str], str] = {
         "The composite reflects the median term-structure shape of the highest-correlated peers.  "
         "Spread shows where the target deviates from this consensus shape."
     ),
-
 }
 
 # ---------------------------------------------------------------------------
@@ -213,11 +209,7 @@ def get_explanation(
     pid = str(plot_type).lower()
 
     # Primary lookup with fallbacks
-    base = (
-        EXPLANATIONS.get((feature, pid))
-        or EXPLANATIONS.get(("iv_atm", pid))
-        or ""
-    )
+    base = EXPLANATIONS.get((feature, pid)) or EXPLANATIONS.get(("iv_atm", pid)) or ""
 
     parts: list[str] = [base] if base else []
 

@@ -96,6 +96,7 @@ def corr_by_expiry_rank(
     slices: dict = {}
     try:
         from analysis.smile_data_service import get_smile_slices_batch
+
         slices = get_smile_slices_batch(tickers, asof, max_expiries=max_expiries)
     except Exception:
         pass  # fallback to per-ticker callable below
@@ -107,8 +108,7 @@ def corr_by_expiry_rank(
         if df is None or df.empty:
             # fallback: per-ticker callable (preserves backward compat)
             try:
-                df = get_slice(ticker, asof_date=asof, T_target_years=None,
-                               call_put=None, nearest_by="T")
+                df = get_slice(ticker, asof_date=asof, T_target_years=None, call_put=None, nearest_by="T")
             except TypeError:
                 try:
                     df = get_slice(ticker, asof, T_target_years=None)

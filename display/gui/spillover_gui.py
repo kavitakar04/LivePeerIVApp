@@ -17,6 +17,7 @@ from analysis.data_availability_service import get_daily_iv_for_spillover, get_d
 
 try:
     from analysis.spillover.network_graph import build_spillover_digraph, compute_graph_metrics
+
     _HAVE_NETWORKX = True
 except ImportError:
     _HAVE_NETWORKX = False
@@ -42,6 +43,11 @@ SPILLOVER_SUMMARY_NOTE = (
     "response is the median event response for that trigger-peer-horizon. "
     "Abnormal vs baseline is median peer response minus the same pair's baseline "
     "median from pseudo-event dates. The CI is for the median peer response."
+)
+
+EVENT_PLOT_NOTE = (
+    "Plot shows one selected event trajectory; table values are medians across all "
+    "events for each trigger-peer-horizon."
 )
 
 SUMMARY_HEADINGS = {
@@ -76,13 +82,20 @@ SUMMARY_WIDTHS = {
 
 RESPONSE_PLOT_LABEL = "Avg pair median response"
 RESPONSE_PLOT_TITLE = "Average of pair-level median responses by horizon"
-RESPONSE_Y_LABEL = "Peer response (% change)"
-EVENT_RESPONSE_Y_LABEL = "Response (% change)"
+RESPONSE_Y_LABEL = "Peer response (%)"
+EVENT_RESPONSE_Y_LABEL = "Response (%)"
 EVENT_RESPONSE_TITLE_SUFFIX = "trigger and peer responses"
 ROLLING_SIGNAL_WINDOW_EVENTS = 30
 ROLLING_SIGNAL_TITLE_SUFFIX = "rolling spillover signal"
 ROLLING_SIGNAL_ABNORMAL_LABEL = "Rolling abnormal response"
 ROLLING_SIGNAL_DIRECTION_LABEL = "Rolling same-direction probability"
+MEDIAN_RESPONSE_LABEL = "All-event median response"
+PCT_SCALE = 100.0
+
+
+def to_plot_percent(values):
+    """Convert decimal response values to percentage units for plotting."""
+    return np.asarray(values, dtype=float) * PCT_SCALE
 
 
 def compute_trigger_event_response(
@@ -188,15 +201,15 @@ def compute_rolling_spillover_signal(
     same_dir = (np.sign(rel["peer_pct"]) == rel["sign"]).astype(float)
     roll = rel["peer_pct"].rolling(window=window, min_periods=1)
     rolling_median = roll.median()
-    out = pd.DataFrame({
-        "date": rel["t0"].to_numpy(),
-        "rolling_median_peer_response": rolling_median.to_numpy(float),
-        "rolling_abnormal_response": (rolling_median - float(baseline)).to_numpy(float),
-        "rolling_same_direction_probability": same_dir.rolling(
-            window=window, min_periods=1
-        ).mean().to_numpy(float),
-        "event_count": rel["peer_pct"].rolling(window=window, min_periods=1).count().to_numpy(int),
-    })
+    out = pd.DataFrame(
+        {
+            "date": rel["t0"].to_numpy(),
+            "rolling_median_peer_response": rolling_median.to_numpy(float),
+            "rolling_abnormal_response": (rolling_median - float(baseline)).to_numpy(float),
+            "rolling_same_direction_probability": same_dir.rolling(window=window, min_periods=1).mean().to_numpy(float),
+            "event_count": rel["peer_pct"].rolling(window=window, min_periods=1).count().to_numpy(int),
+        }
+    )
     return out[cols]
 
 
@@ -241,9 +254,7 @@ class SpilloverFrame(ttk.Frame):
         self.ent_tickers.grid(row=0, column=1, sticky=tk.W, padx=(0, 4))
 
         if input_panel is not None:
-            ttk.Button(ctrl, text="Sync from Browser", command=self._sync_from_browser).grid(
-                row=0, column=2, padx=4
-            )
+            ttk.Button(ctrl, text="Sync from Browser", command=self._sync_from_browser).grid(row=0, column=2, padx=4)
 
         ttk.Label(ctrl, text="Lookback:").grid(row=1, column=0, sticky=tk.W)
         self.ent_lookback = ttk.Entry(ctrl, width=5)
@@ -262,8 +273,7 @@ class SpilloverFrame(ttk.Frame):
 
         ttk.Label(ctrl, text="Mode:").grid(row=0, column=5, sticky=tk.W, padx=(8, 0))
         self._mode_var = tk.StringVar(value="HV")
-        mode_cb = ttk.Combobox(ctrl, textvariable=self._mode_var,
-                               values=["IV", "HV"], state="readonly", width=4)
+        mode_cb = ttk.Combobox(ctrl, textvariable=self._mode_var, values=["IV", "HV"], state="readonly", width=4)
         mode_cb.grid(row=0, column=6, sticky=tk.W)
         mode_cb.bind("<<ComboboxSelected>>", self._on_mode_change)
 
@@ -293,9 +303,7 @@ class SpilloverFrame(ttk.Frame):
         # Event table
         ev_lf = ttk.LabelFrame(tables_frame, text="Events in Lookback Window")
         ev_lf.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
-        self.tree = ttk.Treeview(
-            ev_lf, columns=("date", "ticker", "chg"), show="headings", height=5
-        )
+        self.tree = ttk.Treeview(ev_lf, columns=("date", "ticker", "chg"), show="headings", height=5)
         self.tree.heading("date", text="Date")
         self.tree.heading("ticker", text="Ticker")
         self.tree.heading("chg", text="Rel Change")
@@ -348,12 +356,21 @@ class SpilloverFrame(ttk.Frame):
             gm_cols = ("node", "role", "out_strength", "in_strength", "betweenness", "degree")
             self.tree_graph = ttk.Treeview(gm_lf, columns=gm_cols, show="headings", height=4)
             gm_headings = {
-                "node": "Ticker", "role": "Role", "out_strength": "Out-Strength",
-                "in_strength": "In-Strength", "betweenness": "Betweenness",
+                "node": "Ticker",
+                "role": "Role",
+                "out_strength": "Out-Strength",
+                "in_strength": "In-Strength",
+                "betweenness": "Betweenness",
                 "degree": "Degree",
             }
-            gm_widths = {"node": 70, "role": 80, "out_strength": 100, "in_strength": 100,
-                         "betweenness": 100, "degree": 60}
+            gm_widths = {
+                "node": 70,
+                "role": 80,
+                "out_strength": 100,
+                "in_strength": 100,
+                "betweenness": 100,
+                "degree": 60,
+            }
             for col in gm_cols:
                 self.tree_graph.heading(col, text=gm_headings[col])
                 self.tree_graph.column(col, width=gm_widths[col])
@@ -428,10 +445,13 @@ class SpilloverFrame(ttk.Frame):
                         "Download data first via the Parameter Explorer tab."
                     )
                 if df.empty:
-                    self.after(0, lambda: (
-                        self._status_var.set(""),
-                        messagebox.showerror("No data", no_data_msg),
-                    ))
+                    self.after(
+                        0,
+                        lambda: (
+                            self._status_var.set(""),
+                            messagebox.showerror("No data", no_data_msg),
+                        ),
+                    )
                     return
 
                 results = run_spillover(
@@ -448,8 +468,7 @@ class SpilloverFrame(ttk.Frame):
                     self.results = results
                     self._spillover_source_df = df.copy()
                     self._status_var.set(
-                        f"{len(results['events'])} events · "
-                        f"{len(results['summary'])} summary rows"
+                        f"{len(results['events'])} events · " f"{len(results['summary'])} summary rows"
                     )
                     self._populate_events()
                     self._populate_summary()
@@ -459,10 +478,13 @@ class SpilloverFrame(ttk.Frame):
                 self.after(0, update)
 
             except Exception as exc:
-                self.after(0, lambda e=exc: (
-                    self._status_var.set(""),
-                    messagebox.showerror("Spillover error", str(e)),
-                ))
+                self.after(
+                    0,
+                    lambda e=exc: (
+                        self._status_var.set(""),
+                        messagebox.showerror("Spillover error", str(e)),
+                    ),
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -475,7 +497,8 @@ class SpilloverFrame(ttk.Frame):
         events = self.results["events"].sort_values("date", ascending=False)
         for _, row in events.iterrows():
             iid = self.tree.insert(
-                "", tk.END,
+                "",
+                tk.END,
                 values=(row["date"].date(), row["ticker"], f"{row['rel_change']:.2%}"),
             )
             self._event_rows[iid] = row
@@ -500,20 +523,24 @@ class SpilloverFrame(ttk.Frame):
             )
             ci_low = row.get("median_resp_ci_low", pd.NA)
             ci_high = row.get("median_resp_ci_high", pd.NA)
-            ci_text = (
-                f"[{ci_low:.2%}, {ci_high:.2%}]"
-                if pd.notna(ci_low) and pd.notna(ci_high)
-                else ""
-            )
+            ci_text = f"[{ci_low:.2%}, {ci_high:.2%}]" if pd.notna(ci_low) and pd.notna(ci_high) else ""
             p_value = row.get("p_value", pd.NA)
             q_value = row.get("q_value", pd.NA)
             iid = self.tree_sum.insert(
-                "", tk.END,
+                "",
+                tk.END,
                 values=(
-                    row["ticker"], row["peer"], row["h"],
-                    f"{row['hit_rate']:.0%}", f"{row['sign_concord']:.0%}",
+                    row["ticker"],
+                    row["peer"],
+                    row["h"],
+                    f"{row['hit_rate']:.0%}",
+                    f"{row['sign_concord']:.0%}",
                     f"{row['median_resp']:.2%}",
-                    f"{row.get('median_abnormal_resp', pd.NA):.2%}" if pd.notna(row.get("median_abnormal_resp", pd.NA)) else "",
+                    (
+                        f"{row.get('median_abnormal_resp', pd.NA):.2%}"
+                        if pd.notna(row.get("median_abnormal_resp", pd.NA))
+                        else ""
+                    ),
                     ci_text,
                     f"{p_value:.3f}" if pd.notna(p_value) else "",
                     f"{q_value:.3f}" if pd.notna(q_value) else "",
@@ -547,7 +574,8 @@ class SpilloverFrame(ttk.Frame):
                 else:
                     role = "Balanced"
                 self.tree_graph.insert(
-                    "", tk.END,
+                    "",
+                    tk.END,
                     values=(
                         row["node"],
                         role,
@@ -573,7 +601,7 @@ class SpilloverFrame(ttk.Frame):
             self.canvas.draw()
             return
         grp = summary.groupby("h")["median_resp"].mean()
-        self.ax.plot(grp.index, grp.values, marker="o", label=RESPONSE_PLOT_LABEL)
+        self.ax.plot(grp.index, to_plot_percent(grp.values), marker="o", label=RESPONSE_PLOT_LABEL)
         self.ax.set_xlabel("Horizon (days)")
         self.ax.set_ylabel(RESPONSE_Y_LABEL)
         self.ax.set_title(RESPONSE_PLOT_TITLE)
@@ -638,7 +666,7 @@ class SpilloverFrame(ttk.Frame):
         ax2 = self.ax.twinx()
         self.ax.plot(
             signal["date"],
-            signal["rolling_abnormal_response"],
+            to_plot_percent(signal["rolling_abnormal_response"]),
             color="#1f77b4",
             marker="o",
             label=ROLLING_SIGNAL_ABNORMAL_LABEL,
@@ -659,7 +687,7 @@ class SpilloverFrame(ttk.Frame):
         )
         self.ax.axhline(0, color="black", linewidth=0.5)
         ax2.set_ylim(0.0, 1.0)
-        self.ax.set_ylabel("Abnormal response (% change)")
+        self.ax.set_ylabel("Abnormal response (%)")
         ax2.set_ylabel("Same-direction probability")
         ax_count.set_xlabel("Event date")
         ax_count.set_ylabel("Events")
@@ -683,6 +711,27 @@ class SpilloverFrame(ttk.Frame):
         if row is not None:
             self._plot_event_response(row["ticker"], row["date"])
 
+    def _median_response_curve(self, ticker: str, peer: str, horizons) -> pd.DataFrame:
+        cols = ["h", "median_resp"]
+        summary = self.results["summary"]
+        if summary.empty:
+            return pd.DataFrame(columns=cols)
+        horizon_set = {int(h) for h in horizons}
+        if not horizon_set:
+            return pd.DataFrame(columns=cols)
+        rows = summary.loc[
+            (summary["ticker"].astype(str).str.upper() == str(ticker).upper())
+            & (summary["peer"].astype(str).str.upper() == str(peer).upper())
+            & (summary["h"].astype(int).isin(horizon_set)),
+            cols,
+        ].copy()
+        if rows.empty:
+            return pd.DataFrame(columns=cols)
+        rows["h"] = rows["h"].astype(int)
+        rows["median_resp"] = pd.to_numeric(rows["median_resp"], errors="coerce")
+        rows = rows.replace([np.inf, -np.inf], np.nan).dropna(subset=["median_resp"])
+        return rows.sort_values("h")
+
     def _plot_event_response(self, ticker: str, date):
         self._reset_plot_axes()
         df = self.results["responses"]
@@ -701,7 +750,7 @@ class SpilloverFrame(ttk.Frame):
         if not trigger_response.empty:
             self.ax.plot(
                 trigger_response["h"],
-                trigger_response["response"],
+                to_plot_percent(trigger_response["response"]),
                 marker="o",
                 linewidth=2.2,
                 label=f"{ticker} (trigger)",
@@ -710,11 +759,34 @@ class SpilloverFrame(ttk.Frame):
             self.canvas.draw()
             return
         for peer, grp in subset.groupby("peer"):
-            self.ax.plot(grp["h"], grp["peer_pct"], marker="o", label=peer)
+            self.ax.plot(
+                grp["h"],
+                to_plot_percent(grp["peer_pct"]),
+                marker="o",
+                label=f"{peer} event trajectory",
+            )
+            median_curve = self._median_response_curve(ticker, peer, grp["h"])
+            if not median_curve.empty:
+                self.ax.plot(
+                    median_curve["h"],
+                    to_plot_percent(median_curve["median_resp"]),
+                    linestyle="--",
+                    linewidth=1.4,
+                    label=f"{peer} {MEDIAN_RESPONSE_LABEL}",
+                )
         self.ax.set_xlabel("Horizon (days)")
         self.ax.set_ylabel(EVENT_RESPONSE_Y_LABEL)
-        self.ax.set_title(
-            f"{ticker} event on {pd.Timestamp(date).date()} — {EVENT_RESPONSE_TITLE_SUFFIX}"
+        self.ax.set_title(f"{ticker} event on {pd.Timestamp(date).date()} — {EVENT_RESPONSE_TITLE_SUFFIX}")
+        self.ax.text(
+            0.01,
+            0.99,
+            EVENT_PLOT_NOTE,
+            transform=self.ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8,
+            color="dimgray",
+            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none", "pad": 2},
         )
         self.ax.axhline(0, color="black", linewidth=0.5)
         self.ax.legend()

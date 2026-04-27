@@ -23,14 +23,12 @@ from display.plotting.term_plot import (
 )
 from display.plotting.rv_plots import (
     plot_surface_residual_heatmap,
-    plot_skew_spread,
 )
 
 # Surfaces & synthetic construction
 from analysis.peer_composite_builder import build_surface_grids, combine_surfaces
 
 # Data/analysis utilities
-from analysis.data_availability_service import available_dates
 from analysis.rv_heatmap_service import prepare_rv_heatmap_data
 from analysis.smile_data_service import get_smile_slice, prepare_smile_data
 from analysis.term_data_service import prepare_term_data
@@ -38,7 +36,7 @@ from analysis.cache_io import compute_or_load
 from display.gui.gui_input import plot_id
 
 
-from analysis.cache_io import  WarmupWorker
+from analysis.cache_io import WarmupWorker
 from analysis.correlation_view import corr_by_expiry_rank, prepare_correlation_view
 from analysis.settings import (
     DEFAULT_ATM_BAND,
@@ -48,11 +46,13 @@ from analysis.settings import (
     DEFAULT_MONEYNESS_BINS,
     DEFAULT_SMILE_GRID_POINTS,
     DEFAULT_SMILE_MONEYNESS_RANGE,
+    DEFAULT_SURFACE_TENORS,
     DEFAULT_WEIGHT_METHOD,
     DEFAULT_WEIGHT_POWER,
 )
 from analysis.weight_view import resolve_peer_weights
 from analysis.explanations import get_explanation
+from analysis.data_availability_service import available_dates  # noqa: F401
 
 
 from analysis.model_params_logger import append_params
@@ -60,11 +60,9 @@ from analysis.atm_extraction import fit_smile_get_atm
 from analysis.model_fit_service import fit_valid_model_params, fit_valid_model_result
 from analysis.peer_smile_composite import build_peer_smile_composite
 from analysis.confidence_bands import (
-    generate_term_structure_confidence_bands,
     svi_confidence_bands,
     sabr_confidence_bands,
     tps_confidence_bands,
-    
 )
 
 # ---------------------------------------------------------------------------
@@ -112,6 +110,24 @@ def _filter_smile_quotes(
         return K[in_band], IV[in_band], cp_filtered, int(finite.sum() - in_band.sum())
     cp_filtered = cp_arr[finite] if cp_arr is not None else None
     return K[finite], IV[finite], cp_filtered, 0
+
+
+def _plot_xy_mask(x, y, label: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, str | None]:
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    if x_arr.shape != y_arr.shape:
+        return (
+            x_arr,
+            y_arr,
+            np.zeros(0, dtype=bool),
+            f"{label} produced mismatched shapes: x={x_arr.shape}, y={y_arr.shape}",
+        )
+    if x_arr.size == 0:
+        return x_arr, y_arr, np.zeros(0, dtype=bool), f"{label} produced no points"
+    valid = np.isfinite(x_arr) & np.isfinite(y_arr)
+    if int(valid.sum()) < 2:
+        return x_arr, y_arr, valid, f"{label} has fewer than 2 finite points"
+    return x_arr, y_arr, valid, None
 
 
 def _fit_quality_text(rmse: float, quality: dict | None = None) -> str:
@@ -180,7 +196,12 @@ def _surface_axis_range(values) -> str:
     vals = []
     for value in values:
         try:
-            vals.append(float(str(value).strip().split(":")[0]))
+            text = str(value).strip()
+            if "-" in text:
+                for part in text.split("-", 1):
+                    vals.append(float(part.strip()))
+            else:
+                vals.append(float(text.split(":")[0]))
         except Exception:
             continue
     if not vals:
@@ -420,20 +441,32 @@ class PlotManager:
         """Clear any cached surface grids."""
         self._surface_cache.clear()
 
-    def _get_surface_grids(self, tickers, max_expiries, mny_bins=None):
+    def _get_surface_grids(self, tickers, max_expiries, mny_bins=None, tenors=None, model="svi", surface_source="fit"):
         """Return surface grids for ``tickers`` using cache if available."""
         bins_key = tuple(tuple(float(x) for x in b) for b in (mny_bins or DEFAULT_MONEYNESS_BINS))
-        key = (tuple(sorted(set(tickers))), int(max_expiries), bins_key)
+        tenor_key = tuple(int(x) for x in (tenors or DEFAULT_SURFACE_TENORS))
+        model_key = str(model or "svi").lower()
+        source_key = str(surface_source or "fit").lower()
+        key = (tuple(sorted(set(tickers))), int(max_expiries), bins_key, tenor_key, model_key, source_key)
         if key not in self._surface_cache:
-            payload = {"tickers": list(key[0]), "max_expiries": key[1], "mny_bins": bins_key}
+            payload = {
+                "tickers": list(key[0]),
+                "max_expiries": key[1],
+                "mny_bins": bins_key,
+                "tenors": tenor_key,
+                "model": model_key,
+                "surface_source": source_key,
+            }
 
             def _builder():
                 return build_surface_grids(
                     tickers=list(key[0]),
-                    tenors=None,
+                    tenors=tenor_key,
                     mny_bins=bins_key,
                     use_atm_only=False,
                     max_expiries=key[1],
+                    surface_source=source_key,
+                    model=model_key,
                 )
 
             try:
@@ -467,10 +500,8 @@ class PlotManager:
                 weight_method, feature_mode = legacy.split("_", 1)
             else:
                 weight_method, feature_mode = legacy, DEFAULT_FEATURE_MODE
-        weight_mode = (
-            "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
-        )
-        #TODO: Fix setting- marked as always true. 
+        weight_mode = "oi" if weight_method == "oi" else f"{weight_method}_{feature_mode}"
+        # TODO: Fix setting- marked as always true.
         overlay_synth = settings.get("overlay_synth", True)
         overlay_peers = settings.get("overlay_peers", False)
         show_term_fit = settings.get("show_term_fit", False)
@@ -487,6 +518,7 @@ class PlotManager:
             prev_tickers != curr_tickers
             or prev.get("max_expiries") != max_expiries
             or prev.get("mny_bins") != mny_bins
+            or prev.get("pillars") != settings.get("pillars")
         ):
             self.invalidate_surface_cache()
 
@@ -519,7 +551,11 @@ class PlotManager:
             weights = None
             if peers:
                 weights = self._weights_from_ui_or_matrix(
-                    target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
+                    target,
+                    peers,
+                    weight_mode,
+                    asof=asof,
+                    pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
                 )
 
             payload = {
@@ -566,7 +602,9 @@ class PlotManager:
                     "asof": asof,
                     "fit_by_expiry": {},
                     "weight_info": _weight_info(target, asof, weight_mode, weights),
-                    "status_events": [_status_event("data", "error", "No smile data available for the selected ticker/date.")],
+                    "status_events": [
+                        _status_event("data", "error", "No smile data available for the selected ticker/date.")
+                    ],
                 }
                 return
 
@@ -575,7 +613,8 @@ class PlotManager:
                 _status_event(
                     "data",
                     "info",
-                    f"Loaded {len(data['Ts'])} expiries and {int(np.isfinite(data['sigma_arr']).sum())} finite IV quotes.",
+                    f"Loaded {len(data['Ts'])} expiries and "
+                    f"{int(np.isfinite(data['sigma_arr']).sum())} finite IV quotes.",
                     n=int(np.isfinite(data["sigma_arr"]).sum()),
                 )
             ]
@@ -631,7 +670,6 @@ class PlotManager:
                 "atm_band": atm_band,
                 "max_expiries": max_expiries,
                 "feature_mode": feature_mode,
-
                 "weight_mode": weight_mode,
             }
 
@@ -664,7 +702,9 @@ class PlotManager:
                     "asof": asof,
                     "fit_by_expiry": {},
                     "weight_info": _weight_info(target, asof, weight_mode, weights),
-                    "status_events": [_status_event("data", "error", "No term-structure data available for the selected ticker/date.")],
+                    "status_events": [
+                        _status_event("data", "error", "No term-structure data available for the selected ticker/date.")
+                    ],
                 }
                 return
 
@@ -679,11 +719,7 @@ class PlotManager:
                     exp = row.get("expiry")
                     if pd.notna(exp):
                         entry["expiry"] = str(exp)
-                    sens = {
-                        k: row[k]
-                        for k in ("atm_vol", "skew", "curv")
-                        if k in row and pd.notna(row[k])
-                    }
+                    sens = {k: row[k] for k in ("atm_vol", "skew", "curv") if k in row and pd.notna(row[k])}
                     if sens:
                         entry["sens"] = sens
                     if entry:
@@ -768,6 +804,10 @@ class PlotManager:
                 weight_mode=weight_mode,
                 atm_band=settings.get("atm_band"),
                 max_expiries=settings.get("max_expiries"),
+                mny_bins=settings.get("mny_bins"),
+                tenors=settings.get("surface_tenors") or settings.get("pillars"),
+                surface_source=settings.get("surface_source", "fit"),
+                surface_model=settings.get("model", "svi"),
             )
             weights.attrs["feature_health"] = result.feature_health
         except Exception:
@@ -834,7 +874,8 @@ class PlotManager:
             _status_event(
                 "data",
                 "info",
-                f"Current smile has {int(np.isfinite(IV).sum())} finite IV quotes; {len(IV_plot)} are used after smile filtering.",
+                f"Current smile has {int(np.isfinite(IV).sum())} finite IV quotes; "
+                f"{len(IV_plot)} are used after smile filtering.",
                 n=int(np.isfinite(IV_plot).sum()),
             )
         ]
@@ -843,13 +884,18 @@ class PlotManager:
                 _status_event(
                     "data_filter",
                     "warning",
-                    f"{excluded_quotes} quotes outside {smile_mny_range[0]:g}-{smile_mny_range[1]:g} K/S were excluded from the smile fit/display.",
+                    f"{excluded_quotes} quotes outside "
+                    f"{smile_mny_range[0]:g}-{smile_mny_range[1]:g} K/S were excluded from the smile fit/display.",
                 )
             )
         selected_quality = quality_map.get(model) or {}
         if selected_quality.get("ok") is False:
             status_events.append(
-                _status_event("model_fit", "rejected", f"{model.upper()} rejected: {selected_quality.get('reason', 'failed quality gate')}")
+                _status_event(
+                    "model_fit",
+                    "rejected",
+                    f"{model.upper()} rejected: {selected_quality.get('reason', 'failed quality gate')}",
+                )
             )
         elif fit_params:
             try:
@@ -858,7 +904,12 @@ class PlotManager:
                 rmse_val = np.nan
             if np.isfinite(rmse_val) and rmse_val > SMILE_RMSE_WARN:
                 status_events.append(
-                    _status_event("model_fit", "warning", f"{model.upper()} RMSE {rmse_val:.4f} exceeds warning threshold {SMILE_RMSE_WARN:.2f}.", rmse=rmse_val)
+                    _status_event(
+                        "model_fit",
+                        "warning",
+                        f"{model.upper()} RMSE {rmse_val:.4f} exceeds warning threshold {SMILE_RMSE_WARN:.2f}.",
+                        rmse=rmse_val,
+                    )
                 )
 
         # compute and log parameters for both SVI, SABR and sensitivities
@@ -913,7 +964,11 @@ class PlotManager:
         if overlay_synth and peers:
             try:
                 w = self._weights_from_ui_or_matrix(
-                    target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
+                    target,
+                    peers,
+                    weight_mode,
+                    asof=asof,
+                    pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
                 )
                 peer_slices = {}
                 for peer in peers:
@@ -929,13 +984,19 @@ class PlotManager:
                 )
                 x_mny = composite.get("moneyness", np.array([]))
                 y_syn = composite.get("iv", np.array([]))
-                valid = np.isfinite(x_mny) & np.isfinite(y_syn)
+                x_mny, y_syn, valid, invalid_reason = _plot_xy_mask(x_mny, y_syn, "Peer composite smile")
                 if np.sum(valid) >= 2:
-                    mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
+                    mode_lbl = weight_mode.split("_")[0] if weight_mode else ""
                     if mode_lbl == "corr":
                         mode_lbl = "relative weight matrix"
                     syn_label = f"Peer composite smile ({mode_lbl})" if mode_lbl else "Peer composite smile"
                     ax.plot(x_mny[valid], y_syn[valid], "--", linewidth=1.6, alpha=0.95, label=syn_label)
+                elif invalid_reason:
+                    LOGGER.warning(
+                        "Peer-composite smile overlay skipped: %s skipped=%s",
+                        invalid_reason,
+                        composite.get("skipped", {}),
+                    )
             except Exception as exc:
                 LOGGER.warning("Failed to build peer-composite smile on common grid: %s", exc)
 
@@ -953,12 +1014,32 @@ class PlotManager:
             return
 
         w = self._weights_from_ui_or_matrix(
-            target, peers, weight_mode, asof=asof, pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None
+            target,
+            peers,
+            weight_mode,
+            asof=asof,
+            pillars=self.last_corr_meta.get("pillars") if self.last_corr_meta else None,
         )
 
         try:
             tickers = list({target, *peers})
-            surfaces = self._get_surface_grids(tickers, self._current_max_expiries, getattr(self, "last_settings", {}).get("mny_bins"))
+            settings = getattr(self, "last_settings", {}) or {}
+            try:
+                surfaces = self._get_surface_grids(
+                    tickers,
+                    self._current_max_expiries,
+                    settings.get("mny_bins"),
+                    settings.get("pillars"),
+                    settings.get("model", "svi"),
+                    settings.get("surface_source", "fit"),
+                )
+            except TypeError:
+                surfaces = self._get_surface_grids(
+                    tickers,
+                    self._current_max_expiries,
+                    settings.get("mny_bins"),
+                    settings.get("pillars"),
+                )
 
             tgt_grid = _value_for_asof(surfaces.get(target, {}), asof)
             if tgt_grid is None:
@@ -1004,8 +1085,7 @@ class PlotManager:
                 ax.text(
                     0.5,
                     0.5,
-                    "Insufficient common surface grid\n"
-                    f"common={len(common_rows)} mny x {len(common_cols)} tenor",
+                    "Insufficient common surface grid\n" f"common={len(common_rows)} mny x {len(common_cols)} tenor",
                     ha="center",
                     va="center",
                 )
@@ -1018,7 +1098,7 @@ class PlotManager:
 
             ax.clear()
             ax.axis("off")
-            mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
+            mode_lbl = weight_mode.split("_")[0] if weight_mode else ""
             if mode_lbl == "corr":
                 mode_lbl = "relative weight matrix"
             ax.set_title(f"{target} — IV Surface vs Peer Composite | {asof}", pad=12)
@@ -1052,13 +1132,17 @@ class PlotManager:
                 ("Peer Composite", syn, "viridis"),
                 ("Target - Peer Composite", spread, "coolwarm"),
             ]
-            finite_iv = np.concatenate([
-                tgt.to_numpy(float)[np.isfinite(tgt.to_numpy(float))],
-                syn.to_numpy(float)[np.isfinite(syn.to_numpy(float))],
-            ])
+            finite_iv = np.concatenate(
+                [
+                    tgt.to_numpy(float)[np.isfinite(tgt.to_numpy(float))],
+                    syn.to_numpy(float)[np.isfinite(syn.to_numpy(float))],
+                ]
+            )
             vmin = float(np.nanmin(finite_iv)) if finite_iv.size else None
             vmax = float(np.nanmax(finite_iv)) if finite_iv.size else None
-            spread_abs = float(np.nanmax(np.abs(spread.to_numpy(float)))) if np.isfinite(spread.to_numpy(float)).any() else 0.01
+            spread_abs = (
+                float(np.nanmax(np.abs(spread.to_numpy(float)))) if np.isfinite(spread.to_numpy(float)).any() else 0.01
+            )
 
             ax.text(
                 0.02,
@@ -1093,9 +1177,9 @@ class PlotManager:
             )
 
             panel_positions = [
-                [0.06, 0.19, 0.23, 0.56],
-                [0.37, 0.19, 0.23, 0.56],
-                [0.68, 0.19, 0.23, 0.56],
+                [0.06, 0.25, 0.24, 0.45],
+                [0.37, 0.25, 0.24, 0.45],
+                [0.69, 0.25, 0.24, 0.45],
             ]
             iv_im = None
             spread_im = None
@@ -1105,7 +1189,7 @@ class PlotManager:
                     ax.figure._surface_aux_axes = []
                 ax.figure._surface_aux_axes.append(child)
                 arr = grid.to_numpy(float)
-                kwargs = {"aspect": "auto", "origin": "lower", "cmap": cmap}
+                kwargs = {"aspect": "equal", "origin": "lower", "cmap": cmap}
                 if label != "Target - Peer Composite":
                     kwargs.update(vmin=vmin, vmax=vmax)
                 else:
@@ -1121,17 +1205,20 @@ class PlotManager:
                 child.set_xticks(range(len(common_cols)))
                 child.set_xticklabels([str(c) for c in common_cols], rotation=0, ha="center", fontsize=7)
                 child.set_yticks(range(len(common_rows)))
-                child.set_yticklabels([str(r) for r in common_rows], fontsize=7)
+                if i == 0:
+                    child.set_yticklabels([str(r) for r in common_rows], fontsize=7)
+                else:
+                    child.set_yticklabels([])
                 child.tick_params(axis="both", length=2, pad=2)
 
             if iv_im is not None:
-                cax = ax.inset_axes([0.615, 0.22, 0.012, 0.50])
+                cax = ax.inset_axes([0.625, 0.29, 0.012, 0.34])
                 cbar = ax.figure.colorbar(iv_im, cax=cax)
                 cbar.set_label("IV", fontsize=8)
                 cbar.ax.tick_params(labelsize=7, pad=1)
                 ax.figure._surface_aux_axes.append(cax)
             if spread_im is not None:
-                cax = ax.inset_axes([0.925, 0.22, 0.012, 0.50])
+                cax = ax.inset_axes([0.945, 0.29, 0.012, 0.34])
                 cbar = ax.figure.colorbar(spread_im, cax=cax)
                 cbar.set_label("Spread", fontsize=8)
                 cbar.ax.tick_params(labelsize=7, pad=1)
@@ -1162,7 +1249,7 @@ class PlotManager:
             )
             residual = data.get("latest_residual")
             stability = data.get("weight_stability")
-            mode_lbl = (weight_mode.split("_")[0] if weight_mode else "")
+            mode_lbl = weight_mode.split("_")[0] if weight_mode else ""
             if mode_lbl == "corr":
                 mode_lbl = "relative weight matrix"
             title = f"{target} surface residual vs synthetic | {asof} | {mode_lbl}"
@@ -1175,8 +1262,7 @@ class PlotManager:
                     note = "⚠ Low peer stability: " + ", ".join(unstable.index.tolist())
                     ax.set_xlabel(note, fontsize=7, color="tab:orange")
         except Exception as exc:
-            ax.text(0.5, 0.5, f"RV heatmap failed:\n{exc}", ha="center", va="center",
-                    wrap=True)
+            ax.text(0.5, 0.5, f"RV heatmap failed:\n{exc}", ha="center", va="center", wrap=True)
             ax.set_title(f"RV Heatmap - {target}")
 
     # -------------------- smile click-through renderer --------------------
@@ -1235,7 +1321,7 @@ class PlotManager:
         pre = fit_map.get(T0)
         pre_params = pre.get(model) if isinstance(pre, dict) else None
         quality_meta = (pre.get("quality", {}).get(model) if isinstance(pre, dict) else None) or {}
-        if not pre_params or excluded_quotes:
+        if not pre_params:
             pre_params, quality_meta = fit_valid_model_result(model, S, K_plot, T0, IV_plot)
             if isinstance(pre, dict):
                 pre.setdefault("quality", {})[model] = quality_meta
@@ -1283,7 +1369,8 @@ class PlotManager:
             _status_event(
                 "data",
                 "info",
-                f"Current expiry has {int(np.isfinite(IV).sum())} finite IV quotes; {len(IV_plot)} are used after smile filtering.",
+                f"Current expiry has {int(np.isfinite(IV).sum())} finite IV quotes; "
+                f"{len(IV_plot)} are used after smile filtering.",
                 dte=current_dte,
                 n=int(np.isfinite(IV_plot).sum()),
             )
@@ -1293,7 +1380,8 @@ class PlotManager:
                 _status_event(
                     "data_filter",
                     "warning",
-                    f"{excluded_quotes} quotes outside {smile_mny_range[0]:g}-{smile_mny_range[1]:g} K/S were excluded from the smile fit/display.",
+                    f"{excluded_quotes} quotes outside "
+                    f"{smile_mny_range[0]:g}-{smile_mny_range[1]:g} K/S were excluded from the smile fit/display.",
                     dte=current_dte,
                 )
             )
@@ -1334,34 +1422,58 @@ class PlotManager:
 
         # overlay: peer-composite smile at this T
         weights = self._smile_ctx.get("weights")
-        weight_summary = _weights_summary(weights)
+        _weights_summary(weights)
         if settings.get("overlay_synth"):
-            peer_slices_for_composite = self._smile_ctx.get("peer_slices") or {}
-            if not peer_slices_for_composite:
-                for peer in settings.get("peers") or []:
-                    df_peer = get_smile_slice(peer, asof, T_target_years=None, max_expiries=self._current_max_expiries)
-                    if df_peer is not None and not df_peer.empty:
-                        peer_slices_for_composite[peer.upper()] = df_peer
-                self._smile_ctx["peer_slices"] = peer_slices_for_composite
-            composite = build_peer_smile_composite(
-                peer_slices_for_composite,
-                weights,
-                model=model,
-                target_T=T0,
-                moneyness_grid=smile_grid,
-            )
-            x_mny = composite.get("moneyness", np.array([]))
-            y_syn = composite.get("iv", np.array([]))
-            valid = np.isfinite(x_mny) & np.isfinite(y_syn)
-            if np.sum(valid) >= 2:
-                syn_label = f"Peer composite smile ({mode_lbl})" if mode_lbl else "Peer composite smile"
-                ax.plot(
-                    x_mny[valid],
-                    y_syn[valid],
-                    linestyle="--",
-                    linewidth=1.5,
-                    alpha=0.9,
-                    label=syn_label,
+            try:
+                peer_slices_for_composite = self._smile_ctx.get("peer_slices") or {}
+                if not peer_slices_for_composite:
+                    for peer in settings.get("peers") or []:
+                        df_peer = get_smile_slice(
+                            peer, asof, T_target_years=None, max_expiries=self._current_max_expiries
+                        )
+                        if df_peer is not None and not df_peer.empty:
+                            peer_slices_for_composite[peer.upper()] = df_peer
+                    self._smile_ctx["peer_slices"] = peer_slices_for_composite
+                composite = build_peer_smile_composite(
+                    peer_slices_for_composite,
+                    weights,
+                    model=model,
+                    target_T=T0,
+                    moneyness_grid=smile_grid,
+                )
+                x_mny = composite.get("moneyness", np.array([]))
+                y_syn = composite.get("iv", np.array([]))
+                x_mny, y_syn, valid, invalid_reason = _plot_xy_mask(x_mny, y_syn, "Peer composite smile")
+                if np.sum(valid) >= 2:
+                    syn_label = f"Peer composite smile ({mode_lbl})" if mode_lbl else "Peer composite smile"
+                    ax.plot(
+                        x_mny[valid],
+                        y_syn[valid],
+                        linestyle="--",
+                        linewidth=1.5,
+                        alpha=0.9,
+                        label=syn_label,
+                    )
+                elif invalid_reason:
+                    skipped = composite.get("skipped", {})
+                    LOGGER.warning("Peer-composite smile overlay skipped: %s skipped=%s", invalid_reason, skipped)
+                    status_events.append(
+                        _status_event(
+                            "peer_composite",
+                            "warning",
+                            f"Peer composite smile not plotted: {invalid_reason}.",
+                            dte=current_dte,
+                        )
+                    )
+            except Exception as exc:
+                LOGGER.warning("Failed to build peer-composite smile on common grid: %s", exc)
+                status_events.append(
+                    _status_event(
+                        "peer_composite",
+                        "warning",
+                        f"Peer composite smile not plotted: {exc}",
+                        dte=current_dte,
+                    )
                 )
 
         peer_slices = self._smile_ctx.get("peer_slices") or {}
@@ -1453,7 +1565,7 @@ class PlotManager:
             + f"  RMSE {rmse_text}"
             + f"\n{_base_expl}"
         )
-        
+
         # Ensure canvas and figure are valid before drawing
         if self.canvas is not None and ax.figure is not None:
             self.canvas.draw_idle()
@@ -1476,12 +1588,12 @@ class PlotManager:
     def prev_expiry(self):
         if not self.is_smile_active():
             return
-        Ts = self._smile_ctx["Ts"]
+        self._smile_ctx["Ts"]
         self._smile_ctx["idx"] = max(self._smile_ctx["idx"] - 1, 0)
         self._render_smile_at_index()
 
     # -------------------- term structure --------------------
-    
+
     def _plot_term(
         self,
         ax,
@@ -1504,9 +1616,11 @@ class PlotManager:
         synth_curve = data.get("synth_curve") if overlay_synth else None
         term_warnings = data.get("term_warnings") or []
         alignment_status = data.get("alignment_status", "")
-        composite_status = data.get("composite_status", "")
+        data.get("composite_status", "")
         if weights is not None and len(weights) and not overlay_synth:
-            term_warnings = list(term_warnings) + ["Weighted peer composite is computed but hidden because peer composite overlay is off."]
+            term_warnings = list(term_warnings) + [
+                "Weighted peer composite is computed but hidden because peer composite overlay is off."
+            ]
 
         # Build plain-English description
         try:
@@ -1516,7 +1630,9 @@ class PlotManager:
                 if _far > _near * 1.02:
                     _shape = "upward-sloping (contango) — near-term vol is lower than longer-dated vol"
                 elif _near > _far * 1.02:
-                    _shape = "downward-sloping (backwardation) — near-term stress is elevated relative to longer maturities"
+                    _shape = (
+                        "downward-sloping (backwardation) — near-term stress is elevated relative to longer maturities"
+                    )
                 else:
                     _shape = "roughly flat"
                 _desc_stats = f"  Near-term ATM: {_near:.1%} | Far-term ATM: {_far:.1%}."
@@ -1569,9 +1685,7 @@ class PlotManager:
     def _term_status_events(self, target: str, asof: str, data: dict, weights) -> list[dict]:
         atm_curve = data.get("atm_curve")
         n_exp = int(len(atm_curve)) if atm_curve is not None else 0
-        events = [
-            _status_event("data", "info", f"Term structure contains {n_exp} target expiries.", n=n_exp)
-        ]
+        events = [_status_event("data", "info", f"Term structure contains {n_exp} target expiries.", n=n_exp)]
         alignment_status = data.get("alignment_status", "")
         composite_status = data.get("composite_status", "")
         if alignment_status:
@@ -1624,6 +1738,10 @@ class PlotManager:
         settings = getattr(self, "last_settings", {})
         weight_power = settings.get("weight_power", DEFAULT_WEIGHT_POWER)
         clip_negative = settings.get("clip_negative", DEFAULT_CLIP_NEGATIVE_WEIGHTS)
+        mny_bins = settings.get("mny_bins")
+        surface_tenors = settings.get("surface_tenors") or settings.get("pillars")
+        surface_source = settings.get("surface_source", "fit")
+        surface_model = settings.get("model", "svi")
 
         max_exp = self._current_max_expiries or DEFAULT_MAX_EXPIRIES
 
@@ -1633,6 +1751,10 @@ class PlotManager:
             "atm_band": atm_band,
             "max_expiries": max_exp,
             "weight_mode": matrix_weight_mode,
+            "mny_bins": str(mny_bins),
+            "tenors": str(surface_tenors),
+            "surface_source": surface_source,
+            "surface_model": surface_model,
         }
 
         def _builder():
@@ -1662,6 +1784,10 @@ class PlotManager:
             peers=peers,
             max_expiries=max_exp,
             weight_mode=matrix_weight_mode,
+            mny_bins=mny_bins,
+            tenors=surface_tenors,
+            surface_source=surface_source,
+            surface_model=surface_model,
         )
         plot_correlation_details(
             ax,

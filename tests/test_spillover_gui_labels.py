@@ -1,6 +1,8 @@
 from display.gui.spillover_gui import (
+    EVENT_PLOT_NOTE,
     EVENT_RESPONSE_Y_LABEL,
     EVENT_RESPONSE_TITLE_SUFFIX,
+    MEDIAN_RESPONSE_LABEL,
     ROLLING_SIGNAL_ABNORMAL_LABEL,
     ROLLING_SIGNAL_DIRECTION_LABEL,
     ROLLING_SIGNAL_TITLE_SUFFIX,
@@ -27,9 +29,12 @@ def test_spillover_summary_labels_define_response_metrics():
 def test_spillover_plot_labels_are_not_event_level_averages():
     assert RESPONSE_PLOT_LABEL == "Avg pair median response"
     assert RESPONSE_PLOT_TITLE == "Average of pair-level median responses by horizon"
-    assert RESPONSE_Y_LABEL == "Peer response (% change)"
-    assert EVENT_RESPONSE_Y_LABEL == "Response (% change)"
+    assert RESPONSE_Y_LABEL == "Peer response (%)"
+    assert EVENT_RESPONSE_Y_LABEL == "Response (%)"
     assert EVENT_RESPONSE_TITLE_SUFFIX == "trigger and peer responses"
+    assert "one selected event trajectory" in EVENT_PLOT_NOTE
+    assert "medians across all events" in EVENT_PLOT_NOTE
+    assert MEDIAN_RESPONSE_LABEL == "All-event median response"
     assert ROLLING_SIGNAL_WINDOW_EVENTS == 30
     assert ROLLING_SIGNAL_TITLE_SUFFIX == "rolling spillover signal"
     assert ROLLING_SIGNAL_ABNORMAL_LABEL == "Rolling abnormal response"

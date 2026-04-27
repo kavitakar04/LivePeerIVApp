@@ -13,7 +13,6 @@ Optional ingestion (if you want fresh data):
 
 from __future__ import annotations
 import argparse
-import pandas as pd
 import sys
 from pathlib import Path
 
@@ -31,6 +30,7 @@ from analysis.settings import (
     DEFAULT_RV_LOOKBACK_DAYS,
 )
 
+
 def parse_args():
     p = argparse.ArgumentParser(description="Peer-composite surface demo")
     p.add_argument("--target", required=True, help="Target ticker")
@@ -45,7 +45,11 @@ def parse_args():
     p.add_argument("--export-dir", help="If provided, export artifacts to this directory")
     p.add_argument("--ingest", action="store_true", help="Ingest data before running")
     p.add_argument("--tickers", nargs="+", help="Tickers to ingest (default target+peers)")
-    p.add_argument("--strict-date-intersection", action="store_true", help="Only keep dates where all peers have surfaces (DISABLED - always False)")
+    p.add_argument(
+        "--strict-date-intersection",
+        action="store_true",
+        help="Only keep dates where all peers have surfaces (DISABLED - always False)",
+    )
     return p.parse_args()
 
 
@@ -92,6 +96,7 @@ def main():
     # Fill missing tenors from default if not specified
     if not cfg.tenors:
         from analysis.peer_composite_builder import DEFAULT_TENORS
+
         cfg.tenors = DEFAULT_TENORS
 
     builder = PeerCompositeBuilder(cfg)
@@ -106,12 +111,7 @@ def main():
 
     # Recent RV summary
     if not artifacts.rv_metrics.empty:
-        last_rv = (
-            artifacts.rv_metrics.sort_values("asof_date")
-            .groupby("pillar_days")
-            .tail(1)
-            .reset_index(drop=True)
-        )
+        last_rv = artifacts.rv_metrics.sort_values("asof_date").groupby("pillar_days").tail(1).reset_index(drop=True)
         print("\n=== Latest RV per Pillar ===")
         print(last_rv)
 

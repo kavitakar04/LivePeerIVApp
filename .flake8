@@ -1,0 +1,8 @@
+[flake8]
+max-line-length = 120
+extend-ignore =
+    # E203: whitespace before ':' — numpy slice notation (arr[1 : 2]) is valid
+    E203,
+per-file-ignores =
+    # GUI files set sys.path before local imports, which is intentional
+    display/gui/*.py: E402

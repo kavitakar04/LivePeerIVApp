@@ -31,3 +31,31 @@ def test_weight_view_uses_matching_cached_correlation(monkeypatch):
     )
 
     assert weights.to_dict() == {"PEER": 1.0}
+
+
+def test_weight_view_uses_pillars_as_surface_tenors(monkeypatch):
+    captured = {}
+
+    def fake_compute_unified_weights(**kwargs):
+        captured.update(kwargs)
+        return pd.Series({"PEER": 1.0})
+
+    monkeypatch.setattr("analysis.unified_weights.compute_unified_weights", fake_compute_unified_weights)
+
+    weights = resolve_peer_weights(
+        "TARGET",
+        ["PEER"],
+        "pca_surface_grid",
+        asof="2024-01-01",
+        pillars=[7, 14, 21],
+        settings={
+            "clip_negative": True,
+            "weight_power": 1.0,
+            "pillars": [7, 14, 21],
+            "mny_bins": ((0.5, 0.6),),
+        },
+    )
+
+    assert weights.to_dict() == {"PEER": 1.0}
+    assert captured["tenors"] == [7, 14, 21]
+    assert captured["mny_bins"] == ((0.5, 0.6),)

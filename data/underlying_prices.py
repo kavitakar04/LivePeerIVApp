@@ -18,9 +18,7 @@ def _fetch_history(ticker: str, period: str = "1y") -> pd.DataFrame:
         return pd.DataFrame()
     if hist.empty or "Close" not in hist.columns:
         return pd.DataFrame()
-    df = hist.reset_index()[["Date", "Close"]].rename(
-        columns={"Date": "asof_date", "Close": "close"}
-    )
+    df = hist.reset_index()[["Date", "Close"]].rename(columns={"Date": "asof_date", "Close": "close"})
     df["asof_date"] = pd.to_datetime(df["asof_date"]).dt.date.astype(str)
     df["ticker"] = ticker.upper()
     return df[["asof_date", "ticker", "close"]]
@@ -51,38 +49,41 @@ def update_underlying_prices(tickers: Iterable[str], period: str = "1y") -> int:
         total += len(rows)
     return total
 
+
 def get_available_tickers():
     """Get all tickers that have options data."""
     conn = get_conn()
     df = pd.read_sql_query("SELECT DISTINCT ticker FROM options_quotes", conn)
-    return sorted(df['ticker'].tolist())
+    return sorted(df["ticker"].tolist())
+
 
 def update_all_underlying_prices():
     """Update underlying prices for all available tickers."""
     print("Getting available tickers...")
     tickers = get_available_tickers()
     print(f"Found {len(tickers)} tickers: {tickers}")
-    
+
     print(f"\nFetching 1 year of historical data for {len(tickers)} tickers...")
     print("This may take a few minutes due to API rate limits...")
-    
+
     total_rows = update_underlying_prices(tickers, period="1y")
     print(f"\nSuccessfully updated {total_rows} price records")
-    
+
     # Check the result
     conn = get_conn()
     result_df = pd.read_sql_query(
-        "SELECT COUNT(*) as total_rows, COUNT(DISTINCT ticker) as unique_tickers, MIN(asof_date) as earliest, MAX(asof_date) as latest FROM underlying_prices", 
-        conn
+        "SELECT COUNT(*) as total_rows, COUNT(DISTINCT ticker) as unique_tickers, "
+        "MIN(asof_date) as earliest, MAX(asof_date) as latest FROM underlying_prices",
+        conn,
     )
-    print(f"\nDatabase now contains:")
+    print("\nDatabase now contains:")
     print(f"  Total rows: {result_df['total_rows'].iloc[0]}")
     print(f"  Unique tickers: {result_df['unique_tickers'].iloc[0]}")
     print(f"  Date range: {result_df['earliest'].iloc[0]} to {result_df['latest'].iloc[0]}")
+
 
 if __name__ == "__main__":
     update_all_underlying_prices()
 
 
 __all__ = ["update_underlying_prices"]
-

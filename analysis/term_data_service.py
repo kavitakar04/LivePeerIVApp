@@ -59,7 +59,6 @@ def _apply_term_feature_band_policy(curve: pd.DataFrame, feature_mode: str) -> p
     out["n_obs"] = pd.to_numeric(out.get("count", np.nan), errors="coerce")
     disp = pd.to_numeric(out.get("atm_dispersion", np.nan), errors="coerce")
     y = pd.to_numeric(out.get("atm_vol", np.nan), errors="coerce")
-    n_obs = pd.to_numeric(out.get("n_obs", np.nan), errors="coerce")
     valid_disp = np.isfinite(y) & np.isfinite(disp) & (disp >= 0.0)
     out["quote_dispersion"] = np.where(valid_disp, disp, np.nan)
     if mode == "iv_atm":
@@ -91,7 +90,10 @@ def _log_term_atm_curve(
     if curve is None or curve.empty:
         logger.warning(
             "term ATM extraction ticker=%s role=%s status=empty assigned_weight=%s alignment=%s",
-            ticker, role, weight, alignment,
+            ticker,
+            role,
+            weight,
+            alignment,
         )
         return
     for _, row in curve.iterrows():
@@ -99,7 +101,8 @@ def _log_term_atm_curve(
             "term ATM extraction ticker=%s role=%s expiry=%s T=%.6f spot=%s atm_strike=%s "
             "atm_iv=%s iv_source=%s valid_options=%s model=%s extraction_status=%s "
             "assigned_weight=%s alignment=%s",
-            ticker, role,
+            ticker,
+            role,
             row.get("expiry", ""),
             float(row.get("T", np.nan)),
             row.get("spot", np.nan),
@@ -109,7 +112,8 @@ def _log_term_atm_curve(
             row.get("count", np.nan),
             row.get("model", "unknown"),
             row.get("extraction_status", row.get("model", "unknown")),
-            weight, alignment,
+            weight,
+            alignment,
         )
 
 
@@ -182,7 +186,8 @@ def prepare_term_data(
     min_boot = 100 if ci_level > 0 and feature_mode in {"surface", "surface_grid"} else 0
     extraction_method = "single" if feature_mode == "iv_atm" else "fit"
     atm_curve = _compute_term_atm_curve(
-        target, asof,
+        target,
+        asof,
         atm_band=atm_band,
         min_boot=min_boot,
         ci=ci,
@@ -214,7 +219,8 @@ def prepare_term_data(
         curves: Dict[str, pd.DataFrame] = {}
         for p in peers:
             c = _compute_term_atm_curve(
-                p, asof,
+                p,
+                asof,
                 atm_band=atm_band,
                 min_boot=min_boot,
                 ci=ci,
@@ -258,8 +264,8 @@ def prepare_term_data(
                     peer_curves = aligned_peer_curves
                     if len(atm_curve) < original_target_expiry_count:
                         term_warnings.append(
-                            f"Expiry alignment uses {len(atm_curve)} of {original_target_expiry_count} target expiries; "
-                            "dropped maturities without a one-to-one peer match."
+                            f"Expiry alignment uses {len(atm_curve)} of {original_target_expiry_count} target expiries;"
+                            " dropped maturities without a one-to-one peer match."
                         )
                     pillar_days = common_T * 365.25
                     level = ci_level or 0.68
@@ -337,13 +343,17 @@ def prepare_term_data(
                     composite_status = "aligned_weighted"
                     logger.info(
                         "term peer composite built target=%s asof=%s alignment=%s common_expiries=%s weights=%s",
-                        target, asof, alignment_status,
+                        target,
+                        asof,
+                        alignment_status,
                         [float(x) for x in common_T],
                         aligned_weights.to_dict(),
                     )
                 else:
                     composite_status = "invalid_no_aligned_peer_values"
-                    term_warnings.append("Peer maturities overlap target, but no peer has a complete aligned ATM curve.")
+                    term_warnings.append(
+                        "Peer maturities overlap target, but no peer has a complete aligned ATM curve."
+                    )
             else:
                 alignment_status = "raw_no_overlap"
                 composite_status = "invalid_no_maturity_overlap"

@@ -1,12 +1,12 @@
 # volModel/volModel.py
 from __future__ import annotations
-import math
 from dataclasses import dataclass
-from typing import Dict, Tuple, Optional, Literal
+from typing import Dict, Optional, Literal
 import numpy as np
 
 try:
     import matplotlib.pyplot as plt  # for plot()
+
     _HAVE_MPL = True
 except Exception:
     _HAVE_MPL = False
@@ -18,12 +18,14 @@ from .models import SUPPORTED_MODELS
 
 ModelName = Literal["svi", "sabr", "tps", "poly"]
 
+
 @dataclass
 class SliceParams:
     T: float
     n: int
     rmse: float
     params: Dict[str, float]
+
 
 class VolModel:
     """
@@ -33,6 +35,7 @@ class VolModel:
     - smile(Ks, T): full smile at a given expiry
     - plot(T): quick visualization (if matplotlib available)
     """
+
     def __init__(self, model: ModelName = "svi", poly_method: str = "tps"):
         model = model.lower()
         if model not in SUPPORTED_MODELS:
@@ -43,9 +46,15 @@ class VolModel:
         self.slices: Dict[float, SliceParams] = {}  # keyed by T (years)
         self.beta_fixed: float = 0.5  # for SABR if used
 
-    def fit(self, S: float, Ks: np.ndarray, Ts: np.ndarray, IVs: np.ndarray,
-            weights: Optional[np.ndarray] = None,
-            beta: float = 0.5) -> "VolModel":
+    def fit(
+        self,
+        S: float,
+        Ks: np.ndarray,
+        Ts: np.ndarray,
+        IVs: np.ndarray,
+        weights: Optional[np.ndarray] = None,
+        beta: float = 0.5,
+    ) -> "VolModel":
         """
         Inputs are vectors (same length N):
             S: spot scalar
@@ -84,7 +93,9 @@ class VolModel:
                 out = fit_poly(k_slice, iv_slice, weights=W_slice, method=self.poly_method)
             else:
                 raise ValueError(f"unsupported volatility model: {self.model}")
-            self.slices[float(T)] = SliceParams(T=float(T), n=int(out.get("n", len(K_slice))), rmse=float(out.get("rmse", np.nan)), params=out)
+            self.slices[float(T)] = SliceParams(
+                T=float(T), n=int(out.get("n", len(K_slice))), rmse=float(out.get("rmse", np.nan)), params=out
+            )
         return self
 
     def available_expiries(self):
@@ -140,7 +151,7 @@ class VolModel:
             return
         Ts = np.array(self.available_expiries(), dtype=float)
         Tn = float(Ts[np.argmin(np.abs(Ts - float(T)))])
-        p = self.slices[Tn].params
+        self.slices[Tn].params
         if Ks is None:
             # build a nice moneyness grid around ATM
             m = np.linspace(0.6, 1.4, 81)  # K/S range

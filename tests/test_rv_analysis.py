@@ -369,6 +369,370 @@ class TestGenerateRVSignals:
 # ---------------------------------------------------------------------------
 
 class TestGenerateRVOpportunityDashboard:
+    def test_dashboard_classifies_clean_signal_as_trade_opportunity(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["ATM Level"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [30],
+            "value": [0.24],
+            "synth_value": [0.18],
+            "spread": [0.06],
+            "z_score": [2.7],
+            "pct_rank": [97.0],
+            "description": ["SPY ATM vol vs synthetic at 30d"],
+        })
+        contracts = [{
+            "expiry": "2024-02-16",
+            "strike": 480.0,
+            "moneyness": 1.00,
+            "call_put": "C",
+            "iv": 0.24,
+            "bid": 3.10,
+            "ask": 3.30,
+            "volume": 75.0,
+            "open_interest": 500.0,
+        }]
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (82% same-dir, 76% hit)", {"strength": "Strong", "same_direction_probability": 0.82, "hit_rate": 0.76}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.91, "avg_common_cells": 12}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.1}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: contracts)
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ", "IWM"], asof="2024-01-15")
+
+        trades = payload["trade_opportunities"]
+        anomalies = payload["market_anomalies"]
+        assert len(trades) == 1
+        assert anomalies.empty
+        trade = trades.iloc[0]
+        assert trade["judgment"] == "Tradeable"
+        assert trade["trade_type"] == "Delta-neutral vol RV"
+        assert trade["direction"].startswith("Sell SPY structure / buy QQQ hedge structure")
+        assert "Sell" in trade["sell_legs"]
+        assert "Buy" in trade["buy_legs"]
+        assert trade["trade"]["hedge_ratio_source"] in {"spillover median response", "substitutability-implied beta proxy"}
+        assert "estimated_net_delta_after_hedge_per_1pct" in trade["trade"]["exposures"]
+        assert trade["supporting_contracts"]
+        assert trade["trade_score"] >= 0.72
+        assert trade["source_signal"]["signal"]["classification"]["classification"] == "trade"
+
+    def test_trade_thesis_uses_integer_contract_package_for_fractional_hedge(self, monkeypatch):
+        from analysis import rv_analysis
+
+        target_contracts = [
+            {
+                "expiry": "2024-02-16",
+                "strike": 100.0,
+                "moneyness": 1.00,
+                "call_put": "C",
+                "iv": 0.24,
+                "bid": 2.00,
+                "ask": 2.20,
+                "spot": 100.0,
+                "ttm_days": 30.0,
+                "delta": 0.40,
+                "gamma": 0.01,
+                "vega": 10.0,
+                "theta": -8.0,
+            }
+        ]
+        peer_contracts = [
+            {
+                "expiry": "2024-02-16",
+                "strike": 100.0,
+                "moneyness": 1.00,
+                "call_put": "C",
+                "iv": 0.20,
+                "bid": 1.80,
+                "ask": 2.00,
+                "spot": 100.0,
+                "ttm_days": 30.0,
+                "delta": 0.60,
+                "gamma": 0.01,
+                "vega": 9.0,
+                "theta": -7.0,
+            }
+        ]
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: peer_contracts)
+
+        trade = rv_analysis._compile_trade_thesis(
+            target="TGT",
+            peer="HEDG",
+            asof="2024-01-15",
+            metric_family="level",
+            feature="ATM",
+            maturity_days=30,
+            direction="Rich",
+            target_contracts=target_contracts,
+            spill_meta={"median_response": 1.0},
+            substitutability={"score": 1.0},
+            contract_audit={"risks": []},
+            classification={"classification": "trade"},
+            event_ctx="Idiosyncratic",
+        )
+
+        assert trade["continuous_hedge_ratio"] == pytest.approx(2.0 / 3.0)
+        assert trade["hedge_ratio"] == pytest.approx(2.0 / 3.0)
+        assert trade["hedge_package"]["target_contracts"] == 3
+        assert trade["hedge_package"]["peer_contracts"] == 2
+        assert trade["hedge_package"]["within_tolerance"] is True
+        quantities = [leg["quantity"] for leg in trade["buy_legs"] + trade["sell_legs"]]
+        assert all(float(q).is_integer() for q in quantities)
+        assert "Buy 2x HEDG" in trade["buy_legs_text"]
+        assert "Sell 3x TGT" in trade["sell_legs_text"]
+        assert "0.67x" not in trade["title"]
+        assert abs(trade["exposures"]["estimated_net_delta_after_hedge_per_1pct"]) < 1e-9
+
+    def test_dashboard_scores_systemic_dislocation_instead_of_hard_rejecting(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["ATM Level"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [30],
+            "value": [0.24],
+            "synth_value": [0.18],
+            "spread": [0.06],
+            "z_score": [2.7],
+            "pct_rank": [97.0],
+            "description": ["SPY ATM vol vs synthetic at 30d"],
+        })
+        contracts = [{
+            "expiry": "2024-02-16",
+            "strike": 480.0,
+            "moneyness": 1.00,
+            "call_put": "C",
+            "iv": 0.24,
+            "bid": 3.10,
+            "ask": 3.30,
+            "volume": 75.0,
+            "open_interest": 500.0,
+        }]
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (82% same-dir, 76% hit)", {"strength": "Strong", "same_direction_probability": 0.82, "hit_rate": 0.76}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.91, "avg_common_cells": 12}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Systemic", {"same_direction_share": 1.0}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: contracts)
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ", "IWM"], asof="2024-01-15")
+
+        trades = payload["trade_opportunities"]
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row["judgment"] == "Tradeable"
+        assert row["trade_score"] >= 0.72
+        assert row["source_signal"]["event_context"] == "Systemic"
+        assert any("Systemic" in risk for risk in row["risks"])
+
+    def test_dashboard_missing_contracts_becomes_trade_risk_not_hard_reject(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["ATM Level"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [30],
+            "value": [0.24],
+            "synth_value": [0.18],
+            "spread": [0.06],
+            "z_score": [2.7],
+            "pct_rank": [97.0],
+            "description": ["SPY ATM vol vs synthetic at 30d"],
+        })
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (82% same-dir, 76% hit)", {"strength": "Strong", "same_direction_probability": 0.82, "hit_rate": 0.76}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.91, "avg_common_cells": 12}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.1}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: [])
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ", "IWM"], asof="2024-01-15")
+
+        trades = payload["trade_opportunities"]
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row["judgment"] == "Tradeable"
+        assert row["source_signal"]["contract_auditability"] == "No liquid supporting contracts found."
+        assert any("manual audit" in reason for reason in row["source_signal"]["classification_reasons"])
+
+    def test_dashboard_promotes_near_substitute_without_z_score(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["Curvature"],
+            "asof_date": ["2024-01-15"],
+            "T_days": [45],
+            "value": [0.035],
+            "synth_value": [0.020],
+            "spread": [0.015],
+            "z_score": [np.nan],
+            "pct_rank": [np.nan],
+            "description": ["SPY curvature"],
+            "comparison": ["peer"],
+            "peer": ["QQQ"],
+            "reference_label": ["Actual peer QQQ"],
+        })
+        contracts = [{
+            "expiry": "2024-03-15",
+            "strike": 500.0,
+            "moneyness": 1.12,
+            "call_put": "C",
+            "iv": 0.28,
+            "bid": 1.10,
+            "ask": 1.25,
+            "volume": 20.0,
+            "open_interest": 120.0,
+        }]
+        health = {
+            "available": True,
+            "warnings": [],
+            "pairs": [{"ticker": "QQQ", "correlation": 0.96, "sign_consistency": 0.92}],
+        }
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (85% same-dir, 80% hit)", {"strength": "Strong", "same_direction_probability": 0.85, "hit_rate": 0.80}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.95, "avg_common_cells": 12}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.1}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: (health, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: contracts)
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ"], asof="2024-01-15")
+
+        trades = payload["trade_opportunities"]
+        assert len(trades) == 1
+        trade = trades.iloc[0]
+        assert trade["judgment"] == "Tradeable"
+        assert trade["substitutability"] == "Near substitutes"
+        assert trade["source_signal"]["signal"]["classification"]["score_components"]["dislocation_magnitude"] >= 0.70
+
+    def test_dashboard_maps_model_features_to_trade_construction_classes(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["Skew", "Curvature", "TS Slope", "Event Bump"],
+            "asof_date": ["2024-01-15"] * 4,
+            "T_days": [30, 30, 0, 11],
+            "value": [0.09, 0.08, 0.03, 0.05],
+            "synth_value": [0.02, 0.02, 0.00, 0.00],
+            "spread": [0.07, 0.06, 0.03, 0.05],
+            "z_score": [np.nan] * 4,
+            "pct_rank": [np.nan] * 4,
+            "description": ["signal"] * 4,
+            "comparison": ["peer"] * 4,
+            "peer": ["QQQ"] * 4,
+            "reference_label": ["Actual peer QQQ"] * 4,
+        })
+        contracts = [
+            {
+                "expiry": "2024-02-16",
+                "strike": 430.0,
+                "moneyness": 0.88,
+                "call_put": "P",
+                "iv": 0.30,
+                "bid": 2.00,
+                "ask": 2.20,
+                "volume": 50.0,
+                "open_interest": 400.0,
+                "spot": 480.0,
+                "ttm_days": 30.0,
+                "delta": -0.20,
+                "gamma": 0.01,
+                "vega": 12.0,
+                "theta": -20.0,
+            },
+            {
+                "expiry": "2024-02-16",
+                "strike": 530.0,
+                "moneyness": 1.12,
+                "call_put": "C",
+                "iv": 0.29,
+                "bid": 1.80,
+                "ask": 2.00,
+                "volume": 40.0,
+                "open_interest": 350.0,
+                "spot": 480.0,
+                "ttm_days": 30.0,
+                "delta": 0.18,
+                "gamma": 0.01,
+                "vega": 11.0,
+                "theta": -18.0,
+            },
+        ]
+        health = {
+            "available": True,
+            "warnings": [],
+            "pairs": [{"ticker": "QQQ", "correlation": 0.97, "sign_consistency": 0.95}],
+        }
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Good", [], {"model": "SVI"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Strong (85% same-dir, 80% hit)", {"strength": "Strong", "same_direction_probability": 0.85, "hit_rate": 0.80, "median_response": 0.92}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Comparable", {"avg_surface_corr": 0.95, "avg_common_cells": 12}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Idiosyncratic", {"same_direction_share": 0.1}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: (health, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: contracts)
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ"], asof="2024-01-15")
+
+        classes = set(payload["trade_opportunities"]["trade_type"])
+        assert "Skew-transfer RV" in classes
+        assert "Tail-risk RV" in classes
+        assert "Term-structure RV" in classes
+        assert "Event-vol timing RV" in classes
+        for trade in payload["trade_opportunities"]["trade"]:
+            assert trade["buy_legs"]
+            assert trade["sell_legs"]
+            assert "spillover_beta" in trade["exposures"]
+
+    def test_dashboard_groups_low_score_anomalies(self, monkeypatch):
+        from analysis import rv_analysis
+        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+
+        raw = pd.DataFrame({
+            "signal_type": ["ATM Level", "ATM Level", "ATM Level"],
+            "asof_date": ["2024-01-15"] * 3,
+            "T_days": [30, 45, 60],
+            "value": [0.201, 0.202, 0.203],
+            "synth_value": [0.200, 0.200, 0.200],
+            "spread": [0.001, 0.002, 0.003],
+            "z_score": [0.2, 0.3, 0.4],
+            "pct_rank": [55.0, 57.0, 58.0],
+            "description": ["weak ATM"] * 3,
+        })
+
+        monkeypatch.setattr(rv_analysis, "generate_rv_signals", lambda *a, **k: raw)
+        monkeypatch.setattr(rv_analysis, "_load_model_quality", lambda *a, **k: ("Unknown", ["No model log."], {"model": "Unknown"}))
+        monkeypatch.setattr(rv_analysis, "_load_spillover_support", lambda *a, **k: ("Weak (45% same-dir, 40% hit)", {"strength": "Weak", "same_direction_probability": 0.45, "hit_rate": 0.40}, []))
+        monkeypatch.setattr(rv_analysis, "_surface_comparability", lambda *a, **k: ("Poor", {"avg_surface_corr": -0.2, "avg_common_cells": 2}, []))
+        monkeypatch.setattr(rv_analysis, "_event_context", lambda *a, **k: ("Unknown", {}, []))
+        monkeypatch.setattr(rv_analysis, "_feature_health_context", lambda *a, **k: ({"available": True, "warnings": []}, []))
+        monkeypatch.setattr(rv_analysis, "_load_supporting_contracts", lambda *a, **k: [])
+
+        payload = generate_rv_opportunity_dashboard("SPY", ["QQQ"], asof="2024-01-15")
+
+        assert payload["trade_opportunities"].empty
+        anomalies = payload["market_anomalies"]
+        assert len(anomalies) == 1
+        row = anomalies.iloc[0]
+        assert row["group_size"] == 3
+        assert row["judgment"] == "Not tradeable"
+        assert len(row["member_signals"]) == 3
+
     def test_dashboard_turns_raw_signal_into_ranked_opportunity(self, monkeypatch):
         from analysis import rv_analysis
         from analysis.rv_analysis import generate_rv_opportunity_dashboard

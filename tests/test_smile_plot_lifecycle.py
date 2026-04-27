@@ -79,3 +79,40 @@ def test_repeated_smile_render_dedupes_legend_and_hides_extreme_quotes():
             assert np.nanmin(x) >= 0.7
             assert np.nanmax(x) <= 1.3
     plt.close(fig)
+
+
+def test_smile_render_skips_malformed_peer_composite_overlay(monkeypatch):
+    fig, ax = plt.subplots()
+    mgr = _manager_with_smile_context(ax)
+    mgr._smile_ctx["settings"]["overlay_synth"] = True
+    mgr._smile_ctx["settings"]["peers"] = ["P1"]
+    mgr._smile_ctx["peer_slices"] = {
+        "P1": {
+            "T_arr": np.array([]),
+            "K_arr": np.array([]),
+            "sigma_arr": np.array([]),
+            "S_arr": np.array([]),
+        }
+    }
+
+    def malformed_composite(*_args, **_kwargs):
+        return {
+            "moneyness": np.linspace(0.7, 1.3, 121),
+            "iv": np.array([]),
+            "skipped": {"P1": "svi fit rejected"},
+        }
+
+    monkeypatch.setattr("display.gui.gui_plot_manager.build_peer_smile_composite", malformed_composite)
+
+    mgr._render_smile_at_index()
+
+    legend = ax.get_legend()
+    labels = [text.get_text() for text in legend.get_texts()]
+    assert "Peer composite smile (equal)" not in labels
+    assert any(
+        event["category"] == "peer_composite"
+        and event["status"] == "warning"
+        and "mismatched shapes" in event["message"]
+        for event in mgr.last_fit_info["status_events"]
+    )
+    plt.close(fig)

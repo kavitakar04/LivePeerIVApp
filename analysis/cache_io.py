@@ -46,13 +46,11 @@ def _latest_raw_marker(conn: sqlite3.Connection) -> str | None:
 
 def save_calc_cache(conn: sqlite3.Connection, key: str, value: Any) -> None:
     """Persist a calculation cache entry tied to current raw data state."""
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS calc_cache(
+    conn.execute("""CREATE TABLE IF NOT EXISTS calc_cache(
            key TEXT PRIMARY KEY,
            value BLOB,
            created_at INTEGER NOT NULL,
-           raw_marker TEXT)"""
-    )
+           raw_marker TEXT)""")
     blob = sqlite3.Binary(pickle.dumps(value))
     marker = _latest_raw_marker(conn)
     conn.execute(
@@ -64,9 +62,7 @@ def save_calc_cache(conn: sqlite3.Connection, key: str, value: Any) -> None:
 
 def load_calc_cache(conn: sqlite3.Connection, key: str) -> Any | None:
     """Load a cached artifact if raw data has not changed since saving."""
-    row = conn.execute(
-        "SELECT value, raw_marker FROM calc_cache WHERE key=?", (key,)
-    ).fetchone()
+    row = conn.execute("SELECT value, raw_marker FROM calc_cache WHERE key=?", (key,)).fetchone()
     if not row:
         return None
     value_blob, marker = row
@@ -76,6 +72,7 @@ def load_calc_cache(conn: sqlite3.Connection, key: str) -> Any | None:
         return pickle.loads(value_blob)
     except Exception:
         return None
+
 
 def _hash_inputs(kind: str, payload: dict) -> str:
     """Create a stable hash for the inputs.
@@ -92,6 +89,7 @@ def _hash_inputs(kind: str, payload: dict) -> str:
     hasher.update(b"|")
     hasher.update(payload_json.encode())
     return hasher.hexdigest()
+
 
 def compute_or_load(
     kind: str,
@@ -120,22 +118,16 @@ def compute_or_load(
     conn = sqlite3.connect(db_file)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS calc_cache(
+        conn.execute("""CREATE TABLE IF NOT EXISTS calc_cache(
   key TEXT PRIMARY KEY,
   artifact BLOB,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   kind TEXT NOT NULL,
   version TEXT NOT NULL,
-  meta_json TEXT)"""
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS calc_cache_expires ON calc_cache(expires_at)"
-        )
-        row = conn.execute(
-            "SELECT artifact, expires_at FROM calc_cache WHERE key=?", (key,)
-        ).fetchone()
+  meta_json TEXT)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS calc_cache_expires ON calc_cache(expires_at)")
+        row = conn.execute("SELECT artifact, expires_at FROM calc_cache WHERE key=?", (key,)).fetchone()
         if row and row[1] > now:
             try:
                 return pickle.loads(zlib.decompress(row[0]))
@@ -148,12 +140,11 @@ def compute_or_load(
         meta_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
         with conn:
             conn.execute(
-                "REPLACE INTO calc_cache(key, artifact, created_at, expires_at, kind, version, meta_json) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                "REPLACE INTO calc_cache"
+                "(key, artifact, created_at, expires_at, kind, version, meta_json) VALUES(?, ?, ?, ?, ?, ?, ?)",
                 (key, blob, now, expires_at, kind, version, meta_json),
             )
-            conn.execute(
-                "DELETE FROM calc_cache WHERE expires_at <= ?", (now,)
-            )
+            conn.execute("DELETE FROM calc_cache WHERE expires_at <= ?", (now,))
         return artifact
     finally:
         conn.close()

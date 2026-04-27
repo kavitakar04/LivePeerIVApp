@@ -34,6 +34,7 @@ from analysis.settings import (
     DEFAULT_WEIGHT_ATM_BAND,
     DEFAULT_WEIGHT_ATM_TOLERANCE_DAYS,
 )
+
 # from analysis.peer_composite_builder import build_surface_grids
 # from analysis.correlation_utils import compute_atm_corr_pillar_free
 
@@ -47,6 +48,7 @@ if not logger.handlers:
     logger.addHandler(_h)
 logger.setLevel(logging.DEBUG)
 
+
 # -----------------------------------------------------------------------------
 # Enums
 # -----------------------------------------------------------------------------
@@ -55,14 +57,16 @@ class WeightMethod(Enum):
     PCA = "pca"
     COSINE = "cosine"
     EQUAL = "equal"
-    OPEN_INTEREST = "oi"   # implemented via _open_interest_weights
+    OPEN_INTEREST = "oi"  # implemented via _open_interest_weights
+
 
 class FeatureSet(Enum):
-    ATM = "iv_atm"                    # options ATM features
-    ATM_RANKS = "iv_atm_ranks"        # pillar-free ATM by expiry rank
-    SURFACE = "surface"               # market-native expiry-rank x moneyness-bin surface
-    SURFACE_VECTOR = "surface_grid"   # standardized tenor-grid x moneyness-bin surface
-    UNDERLYING_PX = "ul"              # underlying price returns (time-series)
+    ATM = "iv_atm"  # options ATM features
+    ATM_RANKS = "iv_atm_ranks"  # pillar-free ATM by expiry rank
+    SURFACE = "surface"  # market-native expiry-rank x moneyness-bin surface
+    SURFACE_VECTOR = "surface_grid"  # standardized tenor-grid x moneyness-bin surface
+    UNDERLYING_PX = "ul"  # underlying price returns (time-series)
+
 
 # -----------------------------------------------------------------------------
 # Config
@@ -86,6 +90,8 @@ class WeightConfig:
     pca_ridge: float = 1e-3
     surface_missing_policy: str = "median_impute"
     surface_min_coverage: float = 0.70
+    surface_source: str = "fit"
+    surface_model: str = "svi"
 
     @classmethod
     def from_mode(cls, mode: str, **kwargs) -> "WeightConfig":
@@ -188,6 +194,7 @@ class FeatureDiagnostics:
             "n_grid_points": self.n_grid_points,
         }
 
+
 # -----------------------------------------------------------------------------
 # Centralized feature builders (reusable; no circular imports)
 # -----------------------------------------------------------------------------
@@ -203,6 +210,7 @@ def _impute_col_median(X: np.ndarray) -> np.ndarray:
     if mask.any():
         X[mask] = np.broadcast_to(med, X.shape)[mask]
     return X
+
 
 def _zscore_cols(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X = np.asarray(X, float)
@@ -277,7 +285,11 @@ def _diagnose_weights(
     rejected_weights: Optional[pd.Series] = None,
 ) -> WeightDiagnostics:
     w = pd.Series(weights, dtype=float).reindex(peers).fillna(0.0)
-    rejected = pd.Series(rejected_weights, dtype=float).reindex(peers) if rejected_weights is not None else pd.Series(dtype=float)
+    rejected = (
+        pd.Series(rejected_weights, dtype=float).reindex(peers)
+        if rejected_weights is not None
+        else pd.Series(dtype=float)
+    )
     arr = w.to_numpy(float)
     finite = arr[np.isfinite(arr)]
     return WeightDiagnostics(
@@ -286,10 +298,7 @@ def _diagnose_weights(
         peers=peers,
         input_shape=input_shape,
         weights={str(k): float(v) for k, v in w.items()},
-        rejected_weights={
-            str(k): float(v)
-            for k, v in rejected.replace([np.inf, -np.inf], np.nan).dropna().items()
-        },
+        rejected_weights={str(k): float(v) for k, v in rejected.replace([np.inf, -np.inf], np.nan).dropna().items()},
         weight_min=float(np.min(finite)) if finite.size else np.nan,
         weight_max=float(np.max(finite)) if finite.size else np.nan,
         weight_mean=float(np.mean(finite)) if finite.size else np.nan,
@@ -485,6 +494,9 @@ def surface_feature_matrix(
     *,
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
+    surface_source: str = "fit",
+    model: str = "svi",
+    max_expiries: int | None = DEFAULT_MAX_EXPIRIES,
     standardize: bool = True,
     missing_policy: str = "median_impute",
     min_coverage: float = 0.70,
@@ -501,7 +513,13 @@ def surface_feature_matrix(
     _tenors = tuple(int(t) for t in tenors) if tenors else DEFAULT_TENORS
     _mny_bins = tuple(tuple(b) for b in mny_bins) if mny_bins else DEFAULT_MNY_BINS
     mny_labels = [f"{lo:.2f}-{hi:.2f}" for lo, hi in _mny_bins]
-    cfg = PipelineConfig(tenors=_tenors, mny_bins=_mny_bins)
+    cfg = PipelineConfig(
+        tenors=_tenors,
+        mny_bins=_mny_bins,
+        surface_source=str(surface_source or "fit"),
+        surface_model=str(model or "svi"),
+        max_expiries=max_expiries,
+    )
     key = ",".join(sorted(req))
 
     logger.debug("Building surface grids (cached) for %s on %s", req, asof_ts)
@@ -557,18 +575,19 @@ def surface_feature_matrix(
 def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
     """Ticker×time matrix of log returns (rows=tickers). Pairwise-ready (keeps partial rows)."""
     from data.db_utils import get_conn
-    
+
     # Auto-update underlying price data if needed
     tickers_set = set(str(t).upper() for t in tickers)
     logger.info(f"Checking underlying price data for {len(tickers_set)} tickers...")
-    
+
     try:
         from data.data_pipeline import ensure_underlying_price_data
+
         if not ensure_underlying_price_data(tickers_set):
             logger.warning("Failed to ensure underlying price data is available")
     except Exception as e:
         logger.warning(f"Could not auto-update underlying prices: {e}")
-    
+
     conn = get_conn()
     # prefer dedicated table; fallback to options_quotes spot
     placeholders = ",".join("?" * len(tickers_set))
@@ -583,7 +602,7 @@ def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
     except Exception:
         df = pd.DataFrame()
         logger.debug("No underlying_prices table, trying fallback")
-        
+
     if df.empty:
         df = pd.read_sql_query(
             f"SELECT asof_date, ticker, spot AS close FROM options_quotes WHERE ticker IN ({placeholders})",
@@ -594,12 +613,7 @@ def underlying_returns_matrix(tickers: Iterable[str]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    px = (
-        df.groupby(["asof_date", "ticker"])["close"]
-        .median()
-        .unstack("ticker")
-        .sort_index()
-    )
+    px = df.groupby(["asof_date", "ticker"])["close"].median().unstack("ticker").sort_index()
     ret = np.log(px / px.shift(1))
     # drop only all-NaN rows; keep partial rows for pairwise stats
     ret = ret.dropna(how="all")
@@ -747,9 +761,10 @@ class UnifiedWeightComputer:
             return config.asof
         if config.feature_set in (FeatureSet.ATM, FeatureSet.ATM_RANKS, FeatureSet.SURFACE, FeatureSet.SURFACE_VECTOR):
             from data.db_utils import get_conn
+
             tickers = [target] + peers
             conn = get_conn()
-            placeholders = ','.join('?' * len(tickers))
+            placeholders = ",".join("?" * len(tickers))
             q = (
                 "SELECT asof_date, COUNT(DISTINCT ticker) AS n "
                 "FROM options_quotes WHERE ticker IN (" + placeholders + ") "
@@ -770,6 +785,7 @@ class UnifiedWeightComputer:
                 )
                 return best_date.strftime("%Y-%m-%d")
             from analysis.analysis_pipeline import get_most_recent_date_global, available_dates
+
             d = get_most_recent_date_global()
             if d:
                 return d
@@ -817,7 +833,9 @@ class UnifiedWeightComputer:
             rejected_weights: Optional[pd.Series] = None,
         ) -> pd.Series:
             w_eq = self._fallback_equal(peers_list)
-            w_eq.attrs["weight_warning"] = f"{config.method.value} weights failed validation; using equal weights ({reason})"
+            w_eq.attrs["weight_warning"] = (
+                f"{config.method.value} weights failed validation; using equal weights ({reason})"
+            )
             diag = _diagnose_weights(
                 w_eq,
                 config=config,
@@ -832,7 +850,9 @@ class UnifiedWeightComputer:
             )
             _log_weight_diagnostics(diag, logging.WARNING)
             if feature_df is not None:
-                w_eq.attrs["feature_diagnostics"] = dict(getattr(feature_df, "attrs", {}).get("feature_diagnostics", {}))
+                w_eq.attrs["feature_diagnostics"] = dict(
+                    getattr(feature_df, "attrs", {}).get("feature_diagnostics", {})
+                )
             w_eq.attrs["weight_diagnostics"] = diag.as_log_dict()
             return w_eq
 
@@ -892,6 +912,7 @@ class UnifiedWeightComputer:
         config: WeightConfig,
     ) -> pd.Series:
         """Compute weights from an already-built, contract-tagged feature matrix."""
+
         def fallback(
             reason: str,
             condition_number: Optional[float] = None,
@@ -899,7 +920,9 @@ class UnifiedWeightComputer:
             rejected_weights: Optional[pd.Series] = None,
         ) -> pd.Series:
             w_eq = self._fallback_equal(peers_list)
-            w_eq.attrs["weight_warning"] = f"{config.method.value} weights failed validation; using equal weights ({reason})"
+            w_eq.attrs["weight_warning"] = (
+                f"{config.method.value} weights failed validation; using equal weights ({reason})"
+            )
             diag = _diagnose_weights(
                 w_eq,
                 config=config,
@@ -923,7 +946,9 @@ class UnifiedWeightComputer:
                 corr_df = corr_df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
                 condition_number = _condition_number(corr_df.to_numpy(float))
                 attempted_weights = corr_weights_from_matrix(
-                    feature_df, target, peers_list,
+                    feature_df,
+                    target,
+                    peers_list,
                     clip_negative=config.clip_negative,
                     power=config.power,
                     shrinkage=config.corr_shrinkage,
@@ -941,7 +966,9 @@ class UnifiedWeightComputer:
             if config.method == WeightMethod.COSINE:
                 condition_number = _condition_number(feature_df.to_numpy(float))
                 attempted_weights = cosine_similarity_weights_from_matrix(
-                    feature_df, target, peers_list,
+                    feature_df,
+                    target,
+                    peers_list,
                     clip_negative=config.clip_negative,
                     power=config.power,
                 )
@@ -1088,6 +1115,9 @@ class UnifiedWeightComputer:
                     asof,
                     tenors=config.tenors,
                     mny_bins=config.mny_bins,
+                    surface_source=config.surface_source,
+                    model=config.surface_model,
+                    max_expiries=config.max_expiries,
                     missing_policy=config.surface_missing_policy,
                     min_coverage=config.surface_min_coverage,
                 )
@@ -1187,6 +1217,7 @@ class UnifiedWeightComputer:
     # ---- OI method ----
     def _open_interest_weights(self, peers_list: list[str], asof: Optional[str]) -> tuple[pd.Series, Optional[float]]:
         from data.db_utils import get_conn
+
         if not peers_list:
             return pd.Series(dtype=float), None
         conn = get_conn()
@@ -1231,6 +1262,7 @@ class UnifiedWeightComputer:
 
 # Global instance
 _weight_computer = UnifiedWeightComputer()
+
 
 # -----------------------------------------------------------------------------
 # Top-level API

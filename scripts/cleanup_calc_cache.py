@@ -4,6 +4,7 @@ This script can be scheduled via cron to keep the cache table small.
 Example cron entry to run nightly at 2am:
     0 2 * * * /usr/bin/python path/to/cleanup_calc_cache.py --db-path=/path/db.db
 """
+
 from __future__ import annotations
 import argparse
 import sqlite3

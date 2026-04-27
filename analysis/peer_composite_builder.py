@@ -22,7 +22,6 @@ from analysis.settings import (
     DEFAULT_SURFACE_TENORS,
 )
 
-
 # Backward-compatible names used by callers/tests.
 DEFAULT_TENORS = DEFAULT_SURFACE_TENORS
 DEFAULT_MNY_BINS: Tuple[Tuple[float, float], ...] = DEFAULT_MONEYNESS_BINS
@@ -39,12 +38,104 @@ def _mny_labels(bins: Tuple[Tuple[float, float], ...]) -> Tuple[pd.Interval, ...
     return labels, edges
 
 
+def _mny_midpoints(bins: Tuple[Tuple[float, float], ...]) -> np.ndarray:
+    return np.asarray([(float(lo) + float(hi)) / 2.0 for lo, hi in bins], dtype=float)
+
+
+def _limit_expiries(df: pd.DataFrame, max_expiries: Optional[int]) -> pd.DataFrame:
+    if max_expiries is None or max_expiries <= 0 or df.empty:
+        return df
+    limited_dfs = []
+    for (_ticker, _asof_date), group in df.groupby(["ticker", "asof_date"]):
+        unique_expiries = group.groupby("ttm_years")["ttm_years"].first().sort_values()
+        limited_expiries = unique_expiries.head(int(max_expiries)).values
+        limited_dfs.append(group[group["ttm_years"].isin(limited_expiries)])
+    if not limited_dfs:
+        return pd.DataFrame(columns=df.columns)
+    return pd.concat(limited_dfs, ignore_index=True)
+
+
+def _build_fit_sampled_surface_grids(
+    df: pd.DataFrame,
+    *,
+    tenors: Iterable[int],
+    mny_bins: Tuple[Tuple[float, float], ...],
+    model: str,
+) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
+    """Build dense tenor x moneyness grids by fitting expiry smiles first.
+
+    Each expiry smile is fitted with the requested model and sampled at each
+    moneyness-bin midpoint.  Those fitted smile samples are then interpolated
+    across maturity onto the requested tenor axis.  This keeps the standardized
+    surface-grid feature from depending on whether a raw quote happened to land
+    in a particular tenor/bin bucket.
+    """
+    from analysis.model_fit_service import fit_valid_model_result, predict_model_iv
+
+    model = str(model or "svi").lower()
+    tenor_arr = np.asarray(tuple(int(t) for t in tenors), dtype=float)
+    labels, _edges = _mny_labels(mny_bins)
+    mids = _mny_midpoints(mny_bins)
+    out: Dict[str, Dict[pd.Timestamp, pd.DataFrame]] = {}
+
+    for (ticker, asof_date), day_df in df.groupby(["ticker", "asof_date"]):
+        expiry_rows: list[tuple[float, np.ndarray]] = []
+        for _expiry_key, g in day_df.groupby("ttm_years"):
+            T = float(pd.to_numeric(g["ttm_years"], errors="coerce").median())
+            S = float(pd.to_numeric(g["spot"], errors="coerce").median())
+            K = pd.to_numeric(g["strike"], errors="coerce").to_numpy(float)
+            IV = pd.to_numeric(g["iv"], errors="coerce").to_numpy(float)
+            finite = (
+                np.isfinite(K)
+                & np.isfinite(IV)
+                & (K > 0)
+                & (IV > 0)
+                & np.isfinite(S)
+                & (S > 0)
+                & np.isfinite(T)
+                & (T > 0)
+            )
+            if int(finite.sum()) < 3:
+                continue
+            try:
+                params, quality = fit_valid_model_result(model, S, K[finite], T, IV[finite])
+                if not params or not bool(quality.get("ok", False)):
+                    continue
+                sampled = np.asarray(predict_model_iv(model, S, mids * S, T, params), dtype=float)
+            except Exception:
+                continue
+            valid_sample = np.isfinite(sampled) & (sampled > 0.0) & (sampled < 5.0)
+            if sampled.shape != mids.shape or not valid_sample.all():
+                continue
+            expiry_rows.append((T * 365.25, sampled))
+
+        if not expiry_rows:
+            continue
+        expiry_rows.sort(key=lambda item: item[0])
+        expiry_days = np.asarray([item[0] for item in expiry_rows], dtype=float)
+        values = np.vstack([item[1] for item in expiry_rows])
+        if len(expiry_days) == 1:
+            sampled_grid = np.repeat(values[:1, :], len(tenor_arr), axis=0)
+        else:
+            sampled_grid = np.column_stack(
+                [
+                    np.interp(tenor_arr, expiry_days, values[:, j], left=values[0, j], right=values[-1, j])
+                    for j in range(values.shape[1])
+                ]
+            )
+        grid = pd.DataFrame(sampled_grid.T, index=labels, columns=tenor_arr.astype(int))
+        out.setdefault(str(ticker).upper(), {})[pd.to_datetime(asof_date)] = grid
+    return out
+
+
 def build_surface_grids(
     tickers: Iterable[str] | None = None,
     tenors: Iterable[int] = DEFAULT_TENORS,
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS,
     use_atm_only: bool = False,
     max_expiries: Optional[int] = None,
+    surface_source: str = "raw",
+    model: str = "svi",
 ) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
     """Return dict[ticker][date] -> DataFrame (rows=mny bins, cols=tenor bins) with IV means.
 
@@ -57,7 +148,7 @@ def build_surface_grids(
     if mny_bins is None:
         mny_bins = DEFAULT_MNY_BINS
 
-    cols = "asof_date, ticker, ttm_years, moneyness, iv, is_atm"
+    cols = "asof_date, ticker, expiry, strike, spot, ttm_years, moneyness, iv, is_atm"
     q = f"SELECT {cols} FROM options_quotes"
     params: list = []
     clauses = []
@@ -88,19 +179,12 @@ def build_surface_grids(
     df["ttm_days"] = df["ttm_years"] * 365.25
 
     # Limit number of expiries if requested
-    if max_expiries is not None and max_expiries > 0:
-        # Group by ticker and asof_date, then limit expiries for each combination
-        limited_dfs = []
-        for (ticker, asof_date), group in df.groupby(['ticker', 'asof_date']):
-            # Get the closest expiries to today (smallest ttm_years first)
-            unique_expiries = group.groupby('ttm_years')['ttm_years'].first().sort_values()
-            limited_expiries = unique_expiries.head(max_expiries).values
-            limited_group = group[group['ttm_years'].isin(limited_expiries)]
-            limited_dfs.append(limited_group)
-        if limited_dfs:
-            df = pd.concat(limited_dfs, ignore_index=True)
-        else:
-            return {}
+    df = _limit_expiries(df, max_expiries)
+    if df.empty:
+        return {}
+
+    if str(surface_source or "raw").lower() in {"fit", "fitted", "fit_sampled", "smoothed", "smooth"}:
+        return _build_fit_sampled_surface_grids(df, tenors=tenors, mny_bins=mny_bins, model=model)
 
     # Bin to nearest tenor (vectorized)
     tenor_arr = np.asarray(list(tenors), dtype=float)
@@ -114,10 +198,7 @@ def build_surface_grids(
     df = df.dropna(subset=["mny_bin"])
 
     # Average IV per day/ticker cell
-    cell = (
-        df.groupby(["asof_date", "ticker", "mny_bin", "tenor_bin"], observed=True)  #
-          ["iv"].mean().reset_index()
-    )
+    cell = df.groupby(["asof_date", "ticker", "mny_bin", "tenor_bin"], observed=True)["iv"].mean().reset_index()  #
 
     # Split into dicts
     out: Dict[str, Dict[pd.Timestamp, pd.DataFrame]] = {}
@@ -128,9 +209,12 @@ def build_surface_grids(
             sub[pd.to_datetime(date)] = grid
         out[ticker] = sub
     return out
+
+
 # ============================================================
 # 1) Surface-based peer composite (grid combine)
 # ============================================================
+
 
 def combine_surfaces(
     surfaces: Dict[str, Dict[pd.Timestamp, pd.DataFrame]],
@@ -217,6 +301,7 @@ def combine_surfaces(
 # ============================================================
 # 2) ATM-pillar peer-composite IV (series combine)
 # ============================================================
+
 
 def build_synthetic_iv(
     weights: Mapping[str, float],

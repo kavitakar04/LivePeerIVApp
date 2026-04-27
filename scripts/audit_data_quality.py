@@ -18,7 +18,6 @@ from typing import Any
 
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RAW_DB = ROOT / "data" / "iv_data.db"
 DEFAULT_CALC_DB = ROOT / "data" / "calculations.db"
@@ -31,9 +30,7 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone()
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
     return bool(row)
 
 
@@ -86,14 +83,8 @@ def audit_sqlite(path: Path) -> dict[str, Any]:
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
         )["name"].tolist()
         item["tables"] = tables
-        item["table_counts"] = {
-            table: int(_scalar(conn, f"SELECT COUNT(*) FROM {table}") or 0)
-            for table in tables
-        }
-        item["schemas"] = {
-            table: _records(_df(conn, f"PRAGMA table_info({table})"))
-            for table in tables
-        }
+        item["table_counts"] = {table: int(_scalar(conn, f"SELECT COUNT(*) FROM {table}") or 0) for table in tables}
+        item["schemas"] = {table: _records(_df(conn, f"PRAGMA table_info({table})")) for table in tables}
     finally:
         conn.close()
     return item
@@ -117,7 +108,9 @@ def audit_options_db(path: Path) -> dict[str, Any]:
             "asof_dates": int(_scalar(conn, "SELECT COUNT(DISTINCT asof_date) FROM options_quotes") or 0),
             "min_asof": _scalar(conn, "SELECT MIN(asof_date) FROM options_quotes"),
             "max_asof": _scalar(conn, "SELECT MAX(asof_date) FROM options_quotes"),
-            "vendors": _records(_df(conn, "SELECT vendor, COUNT(*) AS rows FROM options_quotes GROUP BY vendor ORDER BY rows DESC")),
+            "vendors": _records(
+                _df(conn, "SELECT vendor, COUNT(*) AS rows FROM options_quotes GROUP BY vendor ORDER BY rows DESC")
+            ),
         }
 
         db["nulls"] = _records(
@@ -174,7 +167,7 @@ def audit_options_db(path: Path) -> dict[str, Any]:
                 FROM options_quotes
                 GROUP BY ticker
                 ORDER BY rows DESC, ticker
-                """
+                """,
             )
         )
 
@@ -193,7 +186,7 @@ def audit_options_db(path: Path) -> dict[str, Any]:
                 HAVING rows < 20 OR expiries < 2 OR iv_rows < rows * 0.8 OR atm_rows = 0
                 ORDER BY asof_date DESC, ticker
                 LIMIT 200
-                """
+                """,
             ),
             limit=200,
         )
@@ -207,7 +200,7 @@ def audit_options_db(path: Path) -> dict[str, Any]:
                 GROUP BY asof_date, ticker, expiry, strike, call_put, vendor
                 HAVING n > 1
                 LIMIT 50
-                """
+                """,
             )
         )
 
@@ -228,7 +221,7 @@ def audit_options_db(path: Path) -> dict[str, Any]:
                     OR (mid IS NOT NULL AND bid IS NOT NULL AND ask IS NOT NULL AND (mid < bid OR mid > ask))
                 ORDER BY asof_date DESC, ticker, expiry, strike
                 LIMIT 50
-                """
+                """,
             )
         )
 
@@ -246,7 +239,9 @@ def audit_options_db(path: Path) -> dict[str, Any]:
             if "key" in cols:
                 db["calc_cache_summary"] = {
                     "rows": int(_scalar(conn, "SELECT COUNT(*) FROM calc_cache") or 0),
-                    "sample_keys": _records(_df(conn, "SELECT key, created_at FROM calc_cache ORDER BY created_at DESC LIMIT 20")),
+                    "sample_keys": _records(
+                        _df(conn, "SELECT key, created_at FROM calc_cache ORDER BY created_at DESC LIMIT 20")
+                    ),
                 }
     finally:
         conn.close()
@@ -280,7 +275,9 @@ def audit_files(root: Path) -> dict[str, Any]:
 def classify_issues(raw: dict[str, Any], calc: dict[str, Any]) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     if raw.get("quick_check") != "ok":
-        issues.append({"severity": "critical", "area": "sqlite", "message": f"iv_data.db quick_check={raw.get('quick_check')}"})
+        issues.append(
+            {"severity": "critical", "area": "sqlite", "message": f"iv_data.db quick_check={raw.get('quick_check')}"}
+        )
 
     total = raw.get("options_summary", {}).get("rows", 0) or 0
     nulls = raw.get("nulls", {})
@@ -288,21 +285,45 @@ def classify_issues(raw: dict[str, Any], calc: dict[str, Any]) -> list[dict[str,
     for key, val in bad.items():
         if val:
             sev = "high" if key in {"bad_iv", "bad_spot", "bad_strike", "bad_ttm", "crossed_market"} else "medium"
-            issues.append({"severity": sev, "area": "options_quotes", "message": f"{key}: {_fmt_int(val)} rows ({_pct(float(val), float(total))})"})
+            issues.append(
+                {
+                    "severity": sev,
+                    "area": "options_quotes",
+                    "message": f"{key}: {_fmt_int(val)} rows ({_pct(float(val), float(total))})",
+                }
+            )
 
     for key in ("iv_null", "spot_null", "ttm_null", "moneyness_null"):
         val = nulls.get(key, 0) or 0
         if total and val / total > 0.05:
-            issues.append({"severity": "high", "area": "options_quotes", "message": f"{key}: {_fmt_int(val)} rows ({_pct(float(val), float(total))})"})
+            issues.append(
+                {
+                    "severity": "high",
+                    "area": "options_quotes",
+                    "message": f"{key}: {_fmt_int(val)} rows ({_pct(float(val), float(total))})",
+                }
+            )
 
     for key in ("bid_null", "ask_null", "open_interest_null"):
         val = nulls.get(key, 0) or 0
         if total and val / total > 0.50:
-            issues.append({"severity": "medium", "area": "market_fields", "message": f"{key}: {_fmt_int(val)} rows ({_pct(float(val), float(total))}); OI/liquidity-weighted paths may be unreliable"})
+            issues.append(
+                {
+                    "severity": "medium",
+                    "area": "market_fields",
+                    "message": f"{key}: {_fmt_int(val)} rows ({_pct(float(val), float(total))}); OI/liquidity-weighted paths may be unreliable",
+                }
+            )
 
     gaps = raw.get("ticker_date_gaps", [])
     if gaps:
-        issues.append({"severity": "medium", "area": "coverage", "message": f"{len(gaps)} ticker/date groups have sparse rows, missing ATM rows, or low IV coverage"})
+        issues.append(
+            {
+                "severity": "medium",
+                "area": "coverage",
+                "message": f"{len(gaps)} ticker/date groups have sparse rows, missing ATM rows, or low IV coverage",
+            }
+        )
 
     coverage = raw.get("ticker_coverage", [])
     if coverage:
@@ -311,14 +332,34 @@ def classify_issues(raw: dict[str, Any], calc: dict[str, Any]) -> list[dict[str,
         stale = [r for r in coverage if max_asof and r.get("max_asof") != max_asof]
         low_atm = [r for r in coverage if float(r.get("atm_share") or 0.0) < 0.02]
         if one_date:
-            issues.append({"severity": "high", "area": "coverage", "message": f"{len(one_date)} tickers have only one as-of date; time-series/spillover/correlation history is weak"})
+            issues.append(
+                {
+                    "severity": "high",
+                    "area": "coverage",
+                    "message": f"{len(one_date)} tickers have only one as-of date; time-series/spillover/correlation history is weak",
+                }
+            )
         if stale:
-            issues.append({"severity": "medium", "area": "coverage", "message": f"{len(stale)} tickers are stale versus latest as-of {max_asof}"})
+            issues.append(
+                {
+                    "severity": "medium",
+                    "area": "coverage",
+                    "message": f"{len(stale)} tickers are stale versus latest as-of {max_asof}",
+                }
+            )
         if low_atm:
-            issues.append({"severity": "medium", "area": "atm_flags", "message": f"{len(low_atm)} tickers have <2% rows flagged ATM; do not rely on persisted is_atm alone"})
+            issues.append(
+                {
+                    "severity": "medium",
+                    "area": "atm_flags",
+                    "message": f"{len(low_atm)} tickers have <2% rows flagged ATM; do not rely on persisted is_atm alone",
+                }
+            )
 
     if calc.get("exists") and calc.get("quick_check") != "ok":
-        issues.append({"severity": "medium", "area": "cache", "message": f"calculations.db quick_check={calc.get('quick_check')}"})
+        issues.append(
+            {"severity": "medium", "area": "cache", "message": f"calculations.db quick_check={calc.get('quick_check')}"}
+        )
     return issues
 
 
@@ -347,12 +388,24 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines.append("")
     lines.append("| Data | Stored In | Main Accessors | Notes |")
     lines.append("|---|---|---|---|")
-    lines.append("| Raw option chains | `data/iv_data.db::options_quotes` | `data.db_utils.get_conn`, `data.db_utils.fetch_quotes`, `analysis.analysis_pipeline.get_smile_slice` | Primary source for smiles, terms, surfaces, weights. `DB_PATH` can override the file. |")
-    lines.append("| Underlying closes | `data/iv_data.db::underlying_prices` | `analysis.unified_weights.underlying_returns_matrix` | Used by `ul` feature modes and fallback weights. |")
-    lines.append("| Ticker presets | `data/iv_data.db::ticker_groups` | `data.ticker_groups`, `display.gui.gui_input.InputPanel` | GUI universe presets. |")
-    lines.append("| Interest rates | `data/iv_data.db::interest_rates`, `ticker_interest_rates` | `data.interest_rates`, GUI rate controls | Used during ingestion/Greek enrichment. |")
-    lines.append("| Calculation cache | `data/calculations.db::calc_cache` | `analysis.cache_io.compute_or_load`, `analysis.cache_io.WarmupWorker` | Canonical TTL/versioned cache for computed smiles, terms, correlations, surfaces, and warmup artifacts. |")
-    lines.append("| Model params | `data/model_params.parquet` | `analysis.model_params_logger` | Fit parameter history shown in parameter views. |")
+    lines.append(
+        "| Raw option chains | `data/iv_data.db::options_quotes` | `data.db_utils.get_conn`, `data.db_utils.fetch_quotes`, `analysis.analysis_pipeline.get_smile_slice` | Primary source for smiles, terms, surfaces, weights. `DB_PATH` can override the file. |"
+    )
+    lines.append(
+        "| Underlying closes | `data/iv_data.db::underlying_prices` | `analysis.unified_weights.underlying_returns_matrix` | Used by `ul` feature modes and fallback weights. |"
+    )
+    lines.append(
+        "| Ticker presets | `data/iv_data.db::ticker_groups` | `data.ticker_groups`, `display.gui.gui_input.InputPanel` | GUI universe presets. |"
+    )
+    lines.append(
+        "| Interest rates | `data/iv_data.db::interest_rates`, `ticker_interest_rates` | `data.interest_rates`, GUI rate controls | Used during ingestion/Greek enrichment. |"
+    )
+    lines.append(
+        "| Calculation cache | `data/calculations.db::calc_cache` | `analysis.cache_io.compute_or_load`, `analysis.cache_io.WarmupWorker` | Canonical TTL/versioned cache for computed smiles, terms, correlations, surfaces, and warmup artifacts. |"
+    )
+    lines.append(
+        "| Model params | `data/model_params.parquet` | `analysis.model_params_logger` | Fit parameter history shown in parameter views. |"
+    )
     lines.append("")
 
     lines.append("## Issues")

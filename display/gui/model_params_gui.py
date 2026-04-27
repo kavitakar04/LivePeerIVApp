@@ -25,10 +25,8 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import sys
 from typing import Dict, Any, Optional
 
 import pandas as pd
@@ -42,9 +40,7 @@ try:
 except Exception:
     # Fallback stub for load_model_params if analysis package is unavailable.
     def load_model_params() -> pd.DataFrame:  # type: ignore[misc]
-        raise ImportError(
-            "load_model_params could not be imported; ensure analysis package is available"
-        )
+        raise ImportError("load_model_params could not be imported; ensure analysis package is available")
 
 
 class ParametersTab(ttk.Frame):
@@ -106,9 +102,7 @@ class ParametersTab(ttk.Frame):
             # Ensure required columns are present
             required = {"model", "param", "value", "asof_date"}
             if not required.issubset(df.columns):
-                raise ValueError(
-                    f"DataFrame must contain columns {required}, got {set(df.columns)}"
-                )
+                raise ValueError(f"DataFrame must contain columns {required}, got {set(df.columns)}")
             # Sort by asof_date to ensure most recent entries are last
             df = df.sort_values("asof_date")
             # Iterate over unique (model, param) combinations

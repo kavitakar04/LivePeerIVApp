@@ -44,8 +44,7 @@ def detect_events(df: pd.DataFrame, threshold: float = DEFAULT_SPILLOVER_EVENT_T
     """
     df = df.sort_values(["ticker", "date"]).copy()
     df["rel_change"] = df.groupby("ticker")["atm_iv"].pct_change()
-    events = df.loc[df["rel_change"].abs() >= threshold,
-                    ["ticker", "date", "rel_change"]].copy()
+    events = df.loc[df["rel_change"].abs() >= threshold, ["ticker", "date", "rel_change"]].copy()
     events["sign"] = np.sign(events["rel_change"]).astype(int)
     return events.reset_index(drop=True)
 
@@ -182,10 +181,12 @@ def compute_weights_and_regression(
     return weights, pd.Series(betas)
 
 
-def compute_responses(df: pd.DataFrame,
-                      events: pd.DataFrame,
-                      peers: Dict[str, List[str]],
-                      horizons: Iterable[int] = DEFAULT_SPILLOVER_HORIZONS) -> pd.DataFrame:
+def compute_responses(
+    df: pd.DataFrame,
+    events: pd.DataFrame,
+    peers: Dict[str, List[str]],
+    horizons: Iterable[int] = DEFAULT_SPILLOVER_HORIZONS,
+) -> pd.DataFrame:
     """Compute peer responses for each event over given horizons.
 
     Response for peer j at horizon ``h`` is the percentage change in j's IV
@@ -219,15 +220,17 @@ def compute_responses(df: pd.DataFrame,
                     continue
                 resp = panel.loc[(d_h, j), "atm_iv"]
                 pct = (resp - base) / base
-                rows.append({
-                    "ticker": i,
-                    "peer": j,
-                    "t0": t0,
-                    "h": int(h),
-                    "trigger_pct": e["rel_change"],
-                    "peer_pct": pct,
-                    "sign": e["sign"],
-                })
+                rows.append(
+                    {
+                        "ticker": i,
+                        "peer": j,
+                        "t0": t0,
+                        "h": int(h),
+                        "trigger_pct": e["rel_change"],
+                        "peer_pct": pct,
+                        "sign": e["sign"],
+                    }
+                )
     return pd.DataFrame(
         rows,
         columns=["ticker", "peer", "t0", "h", "trigger_pct", "peer_pct", "sign"],
@@ -274,12 +277,14 @@ def _baseline_responses(
                 resp = panel.loc[(d_h, peer), "atm_iv"]
                 if not np.isfinite(resp):
                     continue
-                rows.append({
-                    "ticker": ticker,
-                    "peer": peer,
-                    "h": int(h),
-                    "peer_pct": float((resp - base) / base),
-                })
+                rows.append(
+                    {
+                        "ticker": ticker,
+                        "peer": peer,
+                        "h": int(h),
+                        "peer_pct": float((resp - base) / base),
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -359,10 +364,21 @@ def summarise(
     if responses.empty:
         return pd.DataFrame(
             columns=[
-                "ticker", "peer", "h", "hit_rate", "sign_concord",
-                "median_resp", "median_resp_ci_low", "median_resp_ci_high",
-                "baseline_median_resp", "median_abnormal_resp", "p_value",
-                "q_value", "strength", "median_elasticity", "n",
+                "ticker",
+                "peer",
+                "h",
+                "hit_rate",
+                "sign_concord",
+                "median_resp",
+                "median_resp_ci_low",
+                "median_resp_ci_high",
+                "baseline_median_resp",
+                "median_abnormal_resp",
+                "p_value",
+                "q_value",
+                "strength",
+                "median_elasticity",
+                "n",
             ]
         )
     rng = np.random.default_rng(random_state)
@@ -375,9 +391,7 @@ def summarise(
         med_resp = g["peer_pct"].median()
         med_elast = (g["peer_pct"] / g["trigger_pct"]).median()
         b = baseline[
-            (baseline["ticker"] == group_key[0])
-            & (baseline["peer"] == group_key[1])
-            & (baseline["h"] == group_key[2])
+            (baseline["ticker"] == group_key[0]) & (baseline["peer"] == group_key[1]) & (baseline["h"] == group_key[2])
         ]["peer_pct"].to_numpy(float)
         baseline_med = float(np.nanmedian(b)) if b.size else np.nan
         ci_low, ci_high = _bootstrap_median_ci(g["peer_pct"].to_numpy(float), n_boot=n_boot, rng=rng)
@@ -388,21 +402,23 @@ def summarise(
             n_perm=n_perm,
             rng=rng,
         )
-        rows.append({
-            "ticker": group_key[0],
-            "peer": group_key[1],
-            "h": group_key[2],
-            "hit_rate": hr,
-            "sign_concord": sc,
-            "median_resp": med_resp,
-            "median_resp_ci_low": ci_low,
-            "median_resp_ci_high": ci_high,
-            "baseline_median_resp": baseline_med,
-            "median_abnormal_resp": med_resp - baseline_med if np.isfinite(baseline_med) else np.nan,
-            "p_value": p_value,
-            "median_elasticity": med_elast,
-            "n": len(g),
-        })
+        rows.append(
+            {
+                "ticker": group_key[0],
+                "peer": group_key[1],
+                "h": group_key[2],
+                "hit_rate": hr,
+                "sign_concord": sc,
+                "median_resp": med_resp,
+                "median_resp_ci_low": ci_low,
+                "median_resp_ci_high": ci_high,
+                "baseline_median_resp": baseline_med,
+                "median_abnormal_resp": med_resp - baseline_med if np.isfinite(baseline_med) else np.nan,
+                "p_value": p_value,
+                "median_elasticity": med_elast,
+                "n": len(g),
+            }
+        )
     summary = pd.DataFrame(rows)
     summary["q_value"] = _benjamini_hochberg(summary["p_value"])
     summary["strength"] = summary.apply(_strength_label, axis=1)

@@ -136,8 +136,15 @@ def test_gui_peer_composite_surface_explains_context(monkeypatch):
 
     pm = PlotManager()
     pm._current_max_expiries = 2
-    pm.last_settings = {}
-    monkeypatch.setattr(pm, "_get_surface_grids", lambda *args, **kwargs: surfaces)
+    pm.last_settings = {"pillars": [7, 14, 21], "mny_bins": ((0.5, 0.6),)}
+    captured_surface_args = {}
+
+    def fake_get_surface_grids(tickers, max_expiries, mny_bins=None, tenors=None):
+        captured_surface_args["mny_bins"] = mny_bins
+        captured_surface_args["tenors"] = tenors
+        return surfaces
+
+    monkeypatch.setattr(pm, "_get_surface_grids", fake_get_surface_grids)
     monkeypatch.setattr(
         pm,
         "_weights_from_ui_or_matrix",
@@ -159,10 +166,34 @@ def test_gui_peer_composite_surface_explains_context(monkeypatch):
         assert "Composite = weighted peer IV surface (pca)" in text
         assert "Weights: P1 75%, P2 25%" in text
         assert "Common grid: 2 moneyness x 2 tenors" in text
+        assert "moneyness 0.9-1.1" in text
         assert "Spread panel = target - peer composite" in text
         assert "built from P1, P2" in pm.last_description
         assert "intersected moneyness/tenor cells" in pm.last_description
         aux_axes = getattr(fig, "_surface_aux_axes", [])
         assert len(aux_axes) == 5
+        assert aux_axes[0].get_aspect() == 1.0
+        assert all(label.get_text() == "" for label in aux_axes[1].get_yticklabels())
+        assert captured_surface_args["tenors"] == [7, 14, 21]
+        assert captured_surface_args["mny_bins"] == ((0.5, 0.6),)
     finally:
         plt.close(fig)
+
+
+def test_surface_grid_cache_key_includes_custom_tenors(monkeypatch):
+    captured = []
+
+    def fake_build_surface_grids(**kwargs):
+        captured.append(kwargs)
+        return {}
+
+    monkeypatch.setattr("display.gui.gui_plot_manager.build_surface_grids", fake_build_surface_grids)
+    monkeypatch.setattr("display.gui.gui_plot_manager.compute_or_load", lambda _name, _payload, builder: builder())
+
+    pm = PlotManager()
+    pm._get_surface_grids(["TGT"], max_expiries=3, mny_bins=((0.5, 0.6),), tenors=[7, 14, 21])
+    pm._get_surface_grids(["TGT"], max_expiries=3, mny_bins=((0.5, 0.6),), tenors=[7, 30, 60])
+
+    assert captured[0]["tenors"] == (7, 14, 21)
+    assert captured[1]["tenors"] == (7, 30, 60)
+    assert len(captured) == 2

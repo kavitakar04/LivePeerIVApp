@@ -85,7 +85,7 @@ def test_term_comparison_default_layers_are_target_and_composite():
     plt.close(fig)
 
 
-def test_term_plot_draws_quote_dispersion_as_thin_labeled_lines():
+def test_term_plot_draws_quote_dispersion_as_error_bars():
     atm_curve = pd.DataFrame({
         "T": [0.1, 0.2, 0.3],
         "atm_vol": [0.20, 0.22, 0.24],
@@ -109,9 +109,8 @@ def test_term_plot_draws_quote_dispersion_as_thin_labeled_lines():
     labels = [text.get_text() for text in ax.get_legend().get_texts()]
     assert "Target ATM quote dispersion" in labels
     assert "P1 quote dispersion" in labels
-    target_disp = next(line for line in ax.lines if line.get_label() == "Target ATM quote dispersion")
-    assert target_disp.get_linestyle() == ":"
-    assert target_disp.get_linewidth() < 1.0
+    assert not any(line.get_label() == "Target ATM quote dispersion" for line in ax.lines)
+    assert len(ax.collections) >= 2
     plt.close(fig)
 
 

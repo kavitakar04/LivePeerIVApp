@@ -54,7 +54,6 @@ from .settings import (
     DEFAULT_UNDERLYING_LOOKBACK_DAYS,
 )
 
-
 # -----------------------------------------------------------------------------
 # Logging
 # -----------------------------------------------------------------------------
@@ -70,24 +69,29 @@ logger.setLevel(logging.INFO)
 # -----------------------------------------------------------------------------
 _RO_CONN = None
 
+
 # -----------------------------------------------------------------------------
 # Config (GUI friendly)
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class PipelineConfig:
     """Configuration for surface building and caching (GUI friendly)."""
+
     tenors: Tuple[int, ...] = DEFAULT_TENORS
     mny_bins: Tuple[Tuple[float, float], ...] = DEFAULT_MNY_BINS
     pillar_days: Tuple[int, ...] = tuple(DEFAULT_PILLARS_DAYS)
     use_atm_only: bool = False
+    surface_source: str = "raw"
+    surface_model: str = "svi"
     max_expiries: Optional[int] = None  # Limit number of expiries in smiles/surfaces
-    cache_dir: str = "data/cache"       # Optional disk cache for GUI speed
+    cache_dir: str = "data/cache"  # Optional disk cache for GUI speed
 
     def ensure_cache_dir(self) -> None:
         """Ensure the on-disk cache directory exists."""
         p = Path(self.cache_dir)
         if self.cache_dir and not p.is_dir():
             p.mkdir(parents=True, exist_ok=True)
+
 
 # -----------------------------------------------------------------------------
 # Ingest
@@ -115,6 +119,7 @@ def ingest_and_process(
         underlying_lookback_days=underlying_lookback_days,
     )
 
+
 # -----------------------------------------------------------------------------
 # Surfaces (for GUI)
 # -----------------------------------------------------------------------------
@@ -131,6 +136,8 @@ def get_surface_grids_cached(
         mny_bins=cfg.mny_bins,
         use_atm_only=cfg.use_atm_only,
         max_expiries=cfg.max_expiries,
+        surface_source=cfg.surface_source,
+        model=cfg.surface_model,
     )
 
 
@@ -172,9 +179,7 @@ def build_surfaces(
     return all_surfaces
 
 
-def list_surface_dates(
-    surfaces: Dict[str, Dict[pd.Timestamp, pd.DataFrame]]
-) -> List[pd.Timestamp]:
+def list_surface_dates(surfaces: Dict[str, Dict[pd.Timestamp, pd.DataFrame]]) -> List[pd.Timestamp]:
     """All unique dates available across tickers (sorted)."""
     dates: set[pd.Timestamp] = set()
     for dct in surfaces.values():
@@ -188,6 +193,7 @@ def surface_to_frame_for_date(
 ) -> Dict[str, pd.DataFrame]:
     """Extract the grid for a single date across tickers."""
     return {t: dct[date] for t, dct in surfaces.items() if date in dct}
+
 
 # -----------------------------------------------------------------------------
 # Peer-composite surface & ATM pillars
@@ -211,6 +217,7 @@ def build_synthetic_iv_series(
     """Create a weighted ATM pillar IV time series."""
     w = {k.upper(): float(v) for k, v in weights.items()}
     return build_synthetic_iv_pillars(w, pillar_days=pillar_days, tolerance_days=tolerance_days)
+
 
 # -----------------------------------------------------------------------------
 # Betas
@@ -265,10 +272,7 @@ def compute_betas(
 ):
     """Compute vol betas per requested mode (GUI can show table/heatmap)."""
     if mode in ("surface", "surface_grid"):
-        return build_vol_betas(
-            mode=mode, benchmark=benchmark,
-            tenor_days=cfg.tenors, mny_bins=cfg.mny_bins
-        )
+        return build_vol_betas(mode=mode, benchmark=benchmark, tenor_days=cfg.tenors, mny_bins=cfg.mny_bins)
     if mode == "iv_atm":
         return build_vol_betas(mode=mode, benchmark=benchmark, pillar_days=cfg.pillar_days)
     return build_vol_betas(mode=mode, benchmark=benchmark)
@@ -285,23 +289,20 @@ def save_betas(
     base.mkdir(parents=True, exist_ok=True)
 
     if mode == "surface":
-        res = build_vol_betas(
-            mode=mode, benchmark=benchmark,
-            tenor_days=cfg.tenors, mny_bins=cfg.mny_bins
-        )
+        res = build_vol_betas(mode=mode, benchmark=benchmark, tenor_days=cfg.tenors, mny_bins=cfg.mny_bins)
         filename = f"betas_{mode}_vs_{benchmark}.parquet"
         p = os.path.join(base_path, filename)
         df = res.sort_index().to_frame(name="beta").reset_index().rename(columns={"index": "ticker"})
         df.to_parquet(p, index=False)
         return [p]
     return save_correlations(mode=mode, benchmark=benchmark, base_path=base_path)
+
+
 # =========================
 # Relative value (target vs synthetic peers by corr)
 # -----------------------------------------------------------------------------
 def _fetch_target_atm(
-    target: str,
-    pillar_days: Iterable[int],
-    tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
+    target: str, pillar_days: Iterable[int], tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS
 ) -> pd.DataFrame:
     atm = load_atm()
     atm = atm[atm["ticker"] == target].copy()
@@ -312,7 +313,9 @@ def _fetch_target_atm(
     return out[["asof_date", "pillar_days", "iv"]]
 
 
-def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: int = DEFAULT_RV_LOOKBACK_DAYS) -> pd.DataFrame:
+def _rv_metrics_join(
+    target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: int = DEFAULT_RV_LOOKBACK_DAYS
+) -> pd.DataFrame:
     tgt = target_iv.rename(columns={"iv": "iv_target"})
     syn = synth_iv.rename(columns={"iv": "iv_synth"})
     df = pd.merge(tgt, syn, on=["asof_date", "pillar_days"], how="inner").sort_values(["pillar_days", "asof_date"])
@@ -328,9 +331,11 @@ def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: 
         m = g["spread"].rolling(lookback, min_periods=roll).mean()
         s = g["spread"].rolling(lookback, min_periods=roll).std(ddof=1)
         g["z"] = (g["spread"] - m) / s
+
         # percentile rank of latest value within window
         def _pct_rank(x: pd.Series) -> float:
             return x.rank(pct=True).iloc[-1]
+
         g["pct_rank"] = g["spread"].rolling(lookback, min_periods=roll).apply(_pct_rank, raw=False)
         return g
 
@@ -341,7 +346,7 @@ def _rv_metrics_join(target_iv: pd.DataFrame, synth_iv: pd.DataFrame, lookback: 
 def relative_value_atm_report_corrweighted(
     target: str,
     peers: Iterable[str] | None = None,
-    mode: str = "iv_atm",                # 'ul' | 'iv_atm' | 'surface'  (weights source)
+    mode: str = "iv_atm",  # 'ul' | 'iv_atm' | 'surface'  (weights source)
     pillar_days: Iterable[int] = DEFAULT_PILLARS_DAYS,
     lookback: int = DEFAULT_RV_LOOKBACK_DAYS,
     tolerance_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
@@ -386,8 +391,13 @@ def latest_relative_snapshot_corrweighted(
     Convenience: last date per pillar with RV metrics and the weights used.
     """
     rv, w = relative_value_atm_report_corrweighted(
-        target=target, peers=peers, mode=mode, pillar_days=pillar_days,
-        lookback=lookback, tolerance_days=tolerance_days, **kwargs
+        target=target,
+        peers=peers,
+        mode=mode,
+        pillar_days=pillar_days,
+        lookback=lookback,
+        tolerance_days=tolerance_days,
+        **kwargs,
     )
     # If nothing came back, just return early
     if rv.empty:
@@ -415,6 +425,7 @@ def latest_relative_snapshot_corrweighted(
     proj_cols = sorted(set(["pillar_days", "asof_date"] + present_cols))
     return last[proj_cols].sort_values("pillar_days"), w
 
+
 # -----------------------------------------------------------------------------
 # Basic DB helpers + caches
 # -----------------------------------------------------------------------------
@@ -435,9 +446,7 @@ def get_atm_pillars_cached() -> pd.DataFrame:
 def available_tickers() -> List[str]:
     """Unique tickers present in DB (for GUI dropdowns)."""
     conn = _get_ro_conn()
-    return pd.read_sql_query(
-        "SELECT DISTINCT ticker FROM options_quotes ORDER BY 1", conn
-    )["ticker"].tolist()
+    return pd.read_sql_query("SELECT DISTINCT ticker FROM options_quotes ORDER BY 1", conn)["ticker"].tolist()
 
 
 @lru_cache(maxsize=None)
@@ -447,14 +456,13 @@ def available_dates(ticker: Optional[str] = None, most_recent_only: bool = False
 
     if most_recent_only:
         from data.db_utils import get_most_recent_date
+
         recent = get_most_recent_date(conn, ticker)
         return [recent] if recent else []
 
     base = "SELECT DISTINCT asof_date FROM options_quotes"
     if ticker:
-        df = pd.read_sql_query(
-            f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker]
-        )
+        df = pd.read_sql_query(f"{base} WHERE ticker = ? ORDER BY 1", conn, params=[ticker])
     else:
         df = pd.read_sql_query(f"{base} ORDER BY 1", conn)
     return df["asof_date"].tolist()
@@ -524,14 +532,10 @@ def get_daily_hv_for_spillover(
     raw["date"] = pd.to_datetime(raw["date"])
 
     raw = raw.sort_values(["ticker", "date"])
-    raw["log_ret"] = raw.groupby("ticker")["close"].transform(
-        lambda s: np.log(s).diff()
-    )
-    raw["atm_iv"] = (
-        raw.groupby("ticker")["log_ret"]
-        .transform(lambda s: s.rolling(hv_window, min_periods=max(2, hv_window // 2)).std())
-        * np.sqrt(252)
-    )
+    raw["log_ret"] = raw.groupby("ticker")["close"].transform(lambda s: np.log(s).diff())
+    raw["atm_iv"] = raw.groupby("ticker")["log_ret"].transform(
+        lambda s: s.rolling(hv_window, min_periods=max(2, hv_window // 2)).std()
+    ) * np.sqrt(252)
 
     df = raw.dropna(subset=["atm_iv"])[["date", "ticker", "atm_iv"]].copy()
     if start_date:
@@ -555,22 +559,24 @@ def get_most_recent_date_global() -> Optional[str]:
     """Get the most recent date across all tickers."""
     conn = _get_ro_conn()
     from data.db_utils import get_most_recent_date
+
     return get_most_recent_date(conn)
+
 
 # -----------------------------------------------------------------------------
 # Smile helpers, term data, and RV heatmap
 # Implementations live in service modules; re-exported here for backward compat.
 # -----------------------------------------------------------------------------
-from .smile_data_service import (  # noqa: E402
+from .smile_data_service import (  # noqa: E402, F401
     get_smile_slice,
     get_smile_slices_batch,
     prepare_smile_data,
     fit_smile_for,
     sample_smile_curve,
 )
-from .term_data_service import prepare_term_data  # noqa: E402
-from .rv_heatmap_service import prepare_rv_heatmap_data  # noqa: E402
-from .model_fit_service import fit_model_params, quality_checked_result  # noqa: E402  (re-export for backward compat)
+from .term_data_service import prepare_term_data  # noqa: E402, F401
+from .rv_heatmap_service import prepare_rv_heatmap_data  # noqa: E402, F401
+from .model_fit_service import fit_model_params, quality_checked_result  # noqa: E402, F401
 
 
 # Enhanced cache management
@@ -636,6 +642,7 @@ def cleanup_disk_cache(cfg: PipelineConfig, max_age_days: int = 30) -> list[str]
         return []
 
     import time
+
     now = time.time()
     cutoff = max_age_days * 86400
     removed: list[str] = []
@@ -650,6 +657,7 @@ def cleanup_disk_cache(cfg: PipelineConfig, max_age_days: int = 30) -> list[str]
             except OSError:
                 pass
     return removed
+
 
 # -----------------------------------------------------------------------------
 # Lightweight disk cache (enhanced)
@@ -729,11 +737,14 @@ def is_cache_valid(cfg: PipelineConfig, tag: str = "default") -> bool:
         return False
 
 
-def load_surface_from_cache_if_valid(cfg: PipelineConfig, tag: str = "default") -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
+def load_surface_from_cache_if_valid(
+    cfg: PipelineConfig, tag: str = "default"
+) -> Dict[str, Dict[pd.Timestamp, pd.DataFrame]]:
     """Load cached surfaces only if the cache is valid for the current configuration."""
     if not is_cache_valid(cfg, tag):
         return {}
     return load_surface_from_cache(str(Path(cfg.cache_dir) / f"surfaces_{tag}.parquet"))
+
 
 # -----------------------------------------------------------------------------
 # __main__ demo path (safe, optional)

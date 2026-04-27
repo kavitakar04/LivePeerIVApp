@@ -25,7 +25,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Dict, Optional, Tuple
 import pandas as pd
-import numpy as np
 import os
 import json
 import time
@@ -109,9 +108,7 @@ class PeerCompositeBuilder:
 
         if self.cfg.weight_mode == "custom":
             if not custom_weights:
-                raise ValueError(
-                    "custom weight_mode selected but no custom_weights supplied"
-                )
+                raise ValueError("custom weight_mode selected but no custom_weights supplied")
             w = pd.Series(custom_weights, dtype=float)
             return w / w.sum()
 
@@ -131,9 +128,7 @@ class PeerCompositeBuilder:
         )
 
         if w.empty:
-            raise ValueError(
-                f"{self.cfg.weight_mode} weight computation returned empty series"
-            )
+            raise ValueError(f"{self.cfg.weight_mode} weight computation returned empty series")
 
         self._weights = w
         return w
@@ -158,11 +153,7 @@ class PeerCompositeBuilder:
         if self._surfaces is None:
             raise RuntimeError("Surfaces not built yet. Call build_surfaces() first.")
 
-        peer_surfaces = {
-            p: self._surfaces[p]
-            for p in self.cfg.peers
-            if p in self._surfaces
-        }
+        peer_surfaces = {p: self._surfaces[p] for p in self.cfg.peers if p in self._surfaces}
         synthetic = combine_surfaces(peer_surfaces, self._weights.to_dict())
 
         # Optionally restrict dates to intersection across all peer surfaces
@@ -183,14 +174,15 @@ class PeerCompositeBuilder:
             raise RuntimeError("Weights not computed yet.")
 
         uw = UnifiedWeightComputer()
-        asof = uw._choose_asof(self.cfg.target, list(self.cfg.peers),
-                               WeightConfig(method=WeightMethod.CORRELATION,
-                                            feature_set=FeatureSet.ATM))
+        asof = uw._choose_asof(
+            self.cfg.target,
+            list(self.cfg.peers),
+            WeightConfig(method=WeightMethod.CORRELATION, feature_set=FeatureSet.ATM),
+        )
         if not asof:
             raise RuntimeError("No as-of date available for RV.")
 
-        syn = build_synthetic_iv_by_rank(self._weights.to_dict(), asof=asof,
-                                         max_expiries=self.cfg.max_expiries)
+        syn = build_synthetic_iv_by_rank(self._weights.to_dict(), asof=asof, max_expiries=self.cfg.max_expiries)
         if syn.empty:
             self._rv = syn
             return syn

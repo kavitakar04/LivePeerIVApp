@@ -2,19 +2,20 @@
 from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timedelta
-from typing import List, Optional, Dict
+from typing import List, Dict
 
-from analysis.analysis_background_tasks import (
-    SpilloverConfig, build_spillover_last_90d, ensure_spillover_table
-)
+from analysis.analysis_background_tasks import SpilloverConfig, build_spillover_last_90d, ensure_spillover_table
 
 WINDOW_DAYS = 90
+
 
 def _today() -> date:
     return datetime.utcnow().date()
 
+
 def _window_start(end: date) -> date:
     return end - timedelta(days=WINDOW_DAYS)
+
 
 def ensure_indices(conn: sqlite3.Connection) -> None:
     conn.executescript("""
@@ -24,6 +25,7 @@ def ensure_indices(conn: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS idx_px_tkr_dt ON underlying_prices(ticker, asof_date);
     """)
     conn.commit()
+
 
 def list_all_distinct_tickers(conn: sqlite3.Connection) -> List[str]:
     q = """
@@ -36,10 +38,12 @@ def list_all_distinct_tickers(conn: sqlite3.Connection) -> List[str]:
     """
     return [r[0] for r in conn.execute(q)]
 
+
 def prune_derived_outside_window(conn: sqlite3.Connection, keep_from: date) -> int:
     cur = conn.execute("DELETE FROM iv_spillover WHERE asof_date < ?", (keep_from.isoformat(),))
     conn.commit()
     return cur.rowcount
+
 
 def maintain_last_90_days(db_path: str = "data/iv_data.db") -> Dict[str, int]:
     """

@@ -40,14 +40,16 @@ def summarize_feature_health(feature_df: pd.DataFrame | None, *, target: str | N
     distribution: list[dict[str, Any]] = []
     for ticker, row in df.iterrows():
         vals = pd.to_numeric(row, errors="coerce").dropna().to_numpy(float)
-        distribution.append({
-            "ticker": str(ticker),
-            "coverage": float(coverage.loc[ticker]),
-            "mean": float(np.mean(vals)) if vals.size else np.nan,
-            "std": float(np.std(vals, ddof=1)) if vals.size > 1 else np.nan,
-            "min": float(np.min(vals)) if vals.size else np.nan,
-            "max": float(np.max(vals)) if vals.size else np.nan,
-        })
+        distribution.append(
+            {
+                "ticker": str(ticker),
+                "coverage": float(coverage.loc[ticker]),
+                "mean": float(np.mean(vals)) if vals.size else np.nan,
+                "std": float(np.std(vals, ddof=1)) if vals.size > 1 else np.nan,
+                "min": float(np.min(vals)) if vals.size else np.nan,
+                "max": float(np.max(vals)) if vals.size else np.nan,
+            }
+        )
 
     stds = np.array([_safe_float(r["std"]) for r in distribution], dtype=float)
     finite_stds = stds[np.isfinite(stds) & (stds > 1e-12)]
@@ -84,14 +86,16 @@ def summarize_feature_health(feature_df: pd.DataFrame | None, *, target: str | N
             flag = "low correlation"
         if np.isfinite(sign_consistency) and sign_consistency < 0.50:
             flag = "low sign consistency" if not flag else f"{flag}; low sign consistency"
-        pairs.append({
-            "ticker": ticker_s,
-            "common_points": n,
-            "correlation": corr,
-            "mean_difference": mean_diff,
-            "sign_consistency": sign_consistency,
-            "flag": flag,
-        })
+        pairs.append(
+            {
+                "ticker": ticker_s,
+                "common_points": n,
+                "correlation": corr,
+                "mean_difference": mean_diff,
+                "sign_consistency": sign_consistency,
+                "flag": flag,
+            }
+        )
     if any(p.get("flag") for p in pairs):
         warnings.append("Pair diagnostics flagged unusual target/peer feature relationships.")
 
@@ -100,7 +104,9 @@ def summarize_feature_health(feature_df: pd.DataFrame | None, *, target: str | N
     missing_policy = str(diag.get("missing_policy", "unknown"))
     shared_grid = "standardized" in coordinate_system or "grid" in coordinate_system
     if "surface_grid" in str(diag.get("feature_set", "")) and not shared_grid:
-        warnings.append("Inconsistent normalization/alignment: surface_grid is not marked as a shared standardized grid.")
+        warnings.append(
+            "Inconsistent normalization/alignment: surface_grid is not marked as a shared standardized grid."
+        )
     if "interpolation" in missing_policy.lower() or "imputation" in missing_policy.lower():
         sparse_cols = int((finite.sum(axis=0) < max(2, int(0.5 * len(df)))).sum())
     else:
@@ -113,7 +119,9 @@ def summarize_feature_health(feature_df: pd.DataFrame | None, *, target: str | N
         "filtered to valid finite inputs",
     ]
     if "surface" in str(diag.get("feature_set", "")):
-        transformation_log.extend(["aligned by moneyness/tenor definition", "resampled to configured feature coordinates"])
+        transformation_log.extend(
+            ["aligned by moneyness/tenor definition", "resampled to configured feature coordinates"]
+        )
     if normalization not in {"", "none", "unknown"}:
         transformation_log.append(f"normalized using {normalization}")
     else:

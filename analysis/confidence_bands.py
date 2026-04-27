@@ -25,6 +25,7 @@ __all__ = [
     "confidence_z_score",
 ]
 
+
 @dataclass
 class Bands:
     x: np.ndarray
@@ -48,6 +49,7 @@ def confidence_z_score(level: float) -> float:
     """Two-sided normal z-score for a confidence level."""
     level = normalize_confidence_level(level)
     return float(NormalDist().inv_cdf(0.5 + level / 2.0))
+
 
 # -----------------------------
 # Generic nonparametric bootstrap bands
@@ -154,6 +156,7 @@ def residual_bootstrap_bands(
     hi = np.nanquantile(draws, 1.0 - alpha / 2.0, axis=0)
     return Bands(x=grid, mean=center, lo=lo, hi=hi, level=level)
 
+
 # -----------------------------
 # SVI helper bands (expects S,K,T)
 # -----------------------------
@@ -178,6 +181,7 @@ def svi_confidence_bands(
         return svi_smile_iv(S, np.asarray(Kq, float), T, p)
 
     return residual_bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+
 
 # -----------------------------
 # SABR helper bands (expects S,K,T)
@@ -205,6 +209,7 @@ def sabr_confidence_bands(
 
     return residual_bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
 
+
 # -----------------------------
 # TPS helper bands (expects S,K,T)
 # -----------------------------
@@ -228,6 +233,7 @@ def tps_confidence_bands(
         return tps_smile_iv(S, np.asarray(Kq, float), T, p)
 
     return residual_bootstrap_bands(K, iv, _fit, _pred, grid_K, level=level, n_boot=n_boot)
+
 
 # -----------------------------
 # Term structure bootstrap helper
@@ -296,6 +302,7 @@ def generate_term_structure_confidence_bands(
     except Exception:
         return np.array([]), np.array([]), np.array([])
 
+
 # -----------------------------
 # Peer-composite specific confidence bands
 # -----------------------------
@@ -311,7 +318,7 @@ def peer_composite_confidence_bands(
     """
     Create confidence bands for peer-composite surfaces considering both
     weight uncertainty and individual surface uncertainty.
-    
+
     Parameters
     ----------
     surfaces : dict
@@ -328,7 +335,7 @@ def peer_composite_confidence_bands(
         Whether to include uncertainty in the weights
     surface_uncertainty : bool
         Whether to include uncertainty in individual surfaces
-        
+
     Returns
     -------
     Bands
@@ -338,27 +345,27 @@ def peer_composite_confidence_bands(
     grid_K = np.asarray(grid_K, float)
     tickers = list(surfaces.keys())
     n_points = len(grid_K)
-    
+
     # Normalize weights
     total_weight = sum(weights.values())
     if total_weight <= 0:
-        weights = {t: 1.0/len(tickers) for t in tickers}
+        weights = {t: 1.0 / len(tickers) for t in tickers}
     else:
-        weights = {t: w/total_weight for t, w in weights.items()}
-    
+        weights = {t: w / total_weight for t, w in weights.items()}
+
     # Compute baseline synthetic surface
     baseline_synth = np.zeros(n_points)
     for ticker in tickers:
         if ticker in surfaces and ticker in weights:
             baseline_synth += weights[ticker] * surfaces[ticker]
-    
+
     # Bootstrap sampling
     rng = np.random.default_rng(42)
     draws = np.empty((n_boot, n_points), dtype=float)
-    
+
     for b in range(n_boot):
         synth_iv = np.zeros(n_points)
-        
+
         # Resample weights if weight_uncertainty is True
         if weight_uncertainty:
             # Add noise to weights (Dirichlet-like resampling)
@@ -367,27 +374,27 @@ def peer_composite_confidence_bands(
             boot_weights = {tickers[i]: weight_noise[i] for i in range(len(tickers))}
         else:
             boot_weights = weights.copy()
-        
+
         # Combine surfaces with potential surface uncertainty
         for ticker in tickers:
             if ticker in surfaces and ticker in boot_weights:
                 surface_iv = surfaces[ticker].copy()
-                
+
                 # Add surface uncertainty via residual resampling
                 if surface_uncertainty:
                     # Simple residual bootstrap: add random noise
                     residuals = rng.normal(0, 0.01, size=n_points)  # 1% vol noise
                     surface_iv += residuals
-                
+
                 synth_iv += boot_weights[ticker] * surface_iv
-        
+
         draws[b] = synth_iv
-    
+
     # Compute quantiles
     alpha = 1.0 - level
     lo = np.nanquantile(draws, alpha / 2.0, axis=0)
     hi = np.nanquantile(draws, 1.0 - alpha / 2.0, axis=0)
-    
+
     return Bands(x=grid_K, mean=baseline_synth, lo=lo, hi=hi, level=level)
 
 
@@ -400,7 +407,7 @@ def peer_composite_weight_bands(
 ) -> Dict[int, Bands]:
     """
     Create confidence bands for peer-composite weights based on correlation uncertainty.
-    
+
     Parameters
     ----------
     correlation_matrix : np.ndarray
@@ -413,7 +420,7 @@ def peer_composite_weight_bands(
         Confidence level
     n_boot : int
         Number of bootstrap samples
-        
+
     Returns
     -------
     dict
@@ -422,30 +429,30 @@ def peer_composite_weight_bands(
     level = normalize_confidence_level(level)
     n_peers = len(peer_indices)
     rng = np.random.default_rng(42)
-    
+
     # Extract relevant correlation submatrix
     all_indices = [target_idx] + peer_indices
     corr_sub = correlation_matrix[np.ix_(all_indices, all_indices)]
-    
+
     # Baseline weights (correlation-based)
     target_corrs = corr_sub[0, 1:]  # correlations with target
     baseline_weights = np.abs(target_corrs)
     baseline_weights = baseline_weights / baseline_weights.sum()
-    
+
     # Bootstrap correlation matrix
     weight_draws = np.empty((n_boot, n_peers), dtype=float)
-    
+
     for b in range(n_boot):
         # Add noise to correlation matrix
         noise = rng.normal(0, 0.05, size=corr_sub.shape)  # 5% correlation noise
         noise = (noise + noise.T) / 2  # Keep symmetric
         np.fill_diagonal(noise, 0)  # Keep diagonal as 1
-        
+
         boot_corr = corr_sub + noise
         # Ensure valid correlation matrix
         boot_corr = np.clip(boot_corr, -0.99, 0.99)
         np.fill_diagonal(boot_corr, 1.0)
-        
+
         # Compute weights from bootstrapped correlations
         boot_target_corrs = boot_corr[0, 1:]
         boot_weights = np.abs(boot_target_corrs)
@@ -453,40 +460,40 @@ def peer_composite_weight_bands(
             boot_weights = boot_weights / boot_weights.sum()
         else:
             boot_weights = np.ones(n_peers) / n_peers
-            
+
         weight_draws[b] = boot_weights
-    
+
     # Create bands for each peer
     result = {}
     alpha = 1.0 - level
-    
+
     for i, peer_idx in enumerate(peer_indices):
         weights_i = weight_draws[:, i]
         lo = np.nanquantile(weights_i, alpha / 2.0)
         hi = np.nanquantile(weights_i, 1.0 - alpha / 2.0)
-        
+
         # Create single-point bands for weights
         result[peer_idx] = Bands(
             x=np.array([peer_idx]),
             mean=np.array([baseline_weights[i]]),
             lo=np.array([lo]),
             hi=np.array([hi]),
-            level=level
+            level=level,
         )
-    
+
     return result
 
 
 def peer_composite_pillar_bands(
     atm_data: Dict[str, np.ndarray],
-    weights: Dict[str, float], 
+    weights: Dict[str, float],
     pillar_days: np.ndarray,
     level: float = 0.68,
     n_boot: int = 200,
 ) -> Bands:
     """
     Create confidence bands for peer-composite ATM pillar curves.
-    
+
     Parameters
     ----------
     atm_data : dict
@@ -499,7 +506,7 @@ def peer_composite_pillar_bands(
         Confidence level
     n_boot : int
         Number of bootstrap samples
-        
+
     Returns
     -------
     Bands
@@ -509,30 +516,30 @@ def peer_composite_pillar_bands(
     pillar_days = np.asarray(pillar_days, float)
     tickers = list(atm_data.keys())
     n_pillars = len(pillar_days)
-    
+
     # Normalize weights
     total_weight = sum(weights.values())
     if total_weight <= 0:
-        weights = {t: 1.0/len(tickers) for t in tickers}
+        weights = {t: 1.0 / len(tickers) for t in tickers}
     else:
-        weights = {t: w/total_weight for t, w in weights.items()}
-    
+        weights = {t: w / total_weight for t, w in weights.items()}
+
     # Baseline synthetic ATM curve
     baseline_atm = np.zeros(n_pillars)
     for ticker in tickers:
         if ticker in atm_data and ticker in weights:
             baseline_atm += weights[ticker] * atm_data[ticker]
-    
+
     # Bootstrap
     rng = np.random.default_rng(42)
     draws = np.empty((n_boot, n_pillars), dtype=float)
-    
+
     for b in range(n_boot):
         # Resample weights with uncertainty
         weight_noise = rng.gamma(10, size=len(tickers))
         weight_noise = weight_noise / weight_noise.sum()
         boot_weights = {tickers[i]: weight_noise[i] for i in range(len(tickers))}
-        
+
         # Combine ATM curves with noise
         synth_atm = np.zeros(n_pillars)
         for ticker in tickers:
@@ -542,12 +549,12 @@ def peer_composite_pillar_bands(
                 residuals = rng.normal(0, 0.005, size=n_pillars)  # 0.5% vol noise
                 atm_curve += residuals
                 synth_atm += boot_weights[ticker] * atm_curve
-        
+
         draws[b] = synth_atm
-    
+
     # Compute quantiles
     alpha = 1.0 - level
     lo = np.nanquantile(draws, alpha / 2.0, axis=0)
     hi = np.nanquantile(draws, 1.0 - alpha / 2.0, axis=0)
-    
+
     return Bands(x=pillar_days, mean=baseline_atm, lo=lo, hi=hi, level=level)

@@ -21,14 +21,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.data_availability_service import available_tickers, available_dates, ingest_and_process
+from analysis.data_availability_service import available_dates, available_tickers, ingest_and_process  # noqa: F401
 from data.historical_saver import get_last_coverage_report
 from display.gui.gui_input import InputPanel
-from display.gui.gui_plot_manager import PlotManager, plot_id
+from display.gui.gui_plot_manager import PlotManager
 from display.gui.spillover_gui import SpilloverFrame
 from display.gui.parameters_tab import ParametersTab, SystemHealthTab
 from display.gui.rv_signals_tab import RVSignalsFrame
-
 
 BROWSER_TAB_LABELS = (
     "IV Explorer",
@@ -40,8 +39,7 @@ BROWSER_TAB_LABELS = (
 
 
 class BrowserApp(tk.Tk):
-    def __init__(self, *, overlay_synth: bool = True, overlay_peers: bool = False,
-                 ci_percent: float = 68.0):
+    def __init__(self, *, overlay_synth: bool = True, overlay_peers: bool = False, ci_percent: float = 68.0):
         super().__init__()
         self.title("Implied Volatility Browser")
         self.geometry("1200x820")
@@ -62,10 +60,13 @@ class BrowserApp(tk.Tk):
         self.settings_controls.pack(side=tk.TOP, fill=tk.X)
 
         # Inputs
-        self.inputs = InputPanel(self.tab_browser, overlay_synth=overlay_synth,
-                                 overlay_peers=overlay_peers,
-                                 ci_percent=ci_percent,
-                                 settings_parent=self.settings_controls)
+        self.inputs = InputPanel(
+            self.tab_browser,
+            overlay_synth=overlay_synth,
+            overlay_peers=overlay_peers,
+            ci_percent=ci_percent,
+            settings_parent=self.settings_controls,
+        )
         # Bind events
         self.inputs.bind_download(self._on_download)
         self.inputs.bind_plot(self._refresh_plot)
@@ -82,8 +83,13 @@ class BrowserApp(tk.Tk):
 
         # Description bar — plain-English context for the current plot
         self.lbl_desc = ttk.Label(
-            self.tab_browser, text="", anchor="w", foreground="gray40",
-            font=("TkDefaultFont", 9), wraplength=1100, justify=tk.LEFT,
+            self.tab_browser,
+            text="",
+            anchor="w",
+            foreground="gray40",
+            font=("TkDefaultFont", 9),
+            wraplength=1100,
+            justify=tk.LEFT,
         )
         self.lbl_desc.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 2))
 
@@ -132,7 +138,6 @@ class BrowserApp(tk.Tk):
 
         self._update_nav_buttons()
 
-
     # ---------- events ----------
     def _on_target_change(self, *_):
         """
@@ -153,6 +158,7 @@ class BrowserApp(tk.Tk):
         def worker():
             from data.db_utils import get_conn
             import pandas as pd
+
             dates: list[str] = []
             conn = None
             try:
@@ -226,6 +232,7 @@ class BrowserApp(tk.Tk):
                     underlying_lookback_days=underlying_lookback_days,
                 )
                 coverage_report = get_last_coverage_report()
+
                 # On success, schedule UI updates
                 def done():
                     lines = [
@@ -250,12 +257,15 @@ class BrowserApp(tk.Tk):
                     # Refresh available dates now that new data may be present
                     self._on_target_change()
                     self.inputs.btn_download.config(state=tk.NORMAL)
+
                 self.after(0, done)
             except Exception as e:
+
                 def handle(exc=e):
                     messagebox.showerror("Download error", str(exc))
                     self.status.config(text="Download failed")
                     self.inputs.btn_download.config(state=tk.NORMAL)
+
                 self.after(0, handle)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -273,19 +283,23 @@ class BrowserApp(tk.Tk):
                 # Computation (DB queries, weight calc) stays on the worker thread.
                 self.plot_mgr.plot(self.ax, settings)
                 self._attach_selected_feature_health(settings)
+
                 # canvas.draw() and all Tk widget mutations go back to the main thread.
                 def finish():
                     self.canvas.draw()
                     self.status.config(text="Ready")
                     self._update_nav_buttons()
                     self._sync_plot_status()
+
                 self.after(0, finish)
 
             except Exception as e:
+
                 def handle_err(exc=e):
                     messagebox.showerror("Plot error", str(exc))
                     self.status.config(text="Plot failed")
                     self._update_nav_buttons()
+
                 self.after(0, handle_err)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -402,21 +416,18 @@ class BrowserApp(tk.Tk):
 
 
 def main():
-        parser = argparse.ArgumentParser(description="Vol Browser")
-        parser.add_argument(
-            "--overlay-synth",
-            action=argparse.BooleanOptionalAction,
-            default=True,
-            help="Overlay synthetic curves",
-        )
-        parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
-        parser.add_argument("--ci", type=float, default=68.0,
-                            help="Confidence interval percentage (e.g. 95 for 95%)")
-        args = parser.parse_args()
-        app = BrowserApp(overlay_synth=args.overlay_synth,
-                         overlay_peers=args.overlay_peers,
-                         ci_percent=args.ci)
-        app.mainloop()
+    parser = argparse.ArgumentParser(description="Vol Browser")
+    parser.add_argument(
+        "--overlay-synth",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Overlay synthetic curves",
+    )
+    parser.add_argument("--overlay-peers", action="store_true", help="Overlay peer curves")
+    parser.add_argument("--ci", type=float, default=68.0, help="Confidence interval percentage (e.g. 95 for 95%)")
+    args = parser.parse_args()
+    app = BrowserApp(overlay_synth=args.overlay_synth, overlay_peers=args.overlay_peers, ci_percent=args.ci)
+    app.mainloop()
 
 
 if __name__ == "__main__":

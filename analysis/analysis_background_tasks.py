@@ -18,6 +18,7 @@ from analysis.settings import (
 HORIZONS = DEFAULT_BACKGROUND_SPILLOVER_HORIZONS
 WINDOW_DAYS = DEFAULT_BACKGROUND_WINDOW_DAYS
 
+
 @dataclass(frozen=True)
 class SpilloverConfig:
     db_path: str = "data/iv_data.db"
@@ -25,11 +26,14 @@ class SpilloverConfig:
     recompute_tail_days: int = DEFAULT_BACKGROUND_RECOMPUTE_TAIL_DAYS
     min_samples: int = DEFAULT_BACKGROUND_MIN_SAMPLES
 
+
 def _today() -> date:
     return datetime.utcnow().date()
 
+
 def _window_start(end: date) -> date:
     return end - timedelta(days=WINDOW_DAYS)
+
 
 def ensure_spillover_table(conn: sqlite3.Connection) -> None:
     conn.executescript("""
@@ -50,6 +54,7 @@ def ensure_spillover_table(conn: sqlite3.Connection) -> None:
     """)
     conn.commit()
 
+
 def distinct_tickers_in_db(conn: sqlite3.Connection) -> List[str]:
     q = """
     SELECT ticker FROM (
@@ -63,21 +68,11 @@ def distinct_tickers_in_db(conn: sqlite3.Connection) -> List[str]:
     """
     return [r[0] for r in conn.execute(q)]
 
+
 def daily_atm_iv_panel(conn: sqlite3.Connection, start: date, end: date) -> pd.DataFrame:
     """
     Returns DataFrame: columns [asof_date, ticker, atm_iv]
     atm_iv = median iv where is_atm=1 for each asof_date,ticker.
-    """
-    q = """
-    SELECT asof_date, ticker, MEDIAN(iv) AS atm_iv
-    FROM (
-        SELECT asof_date, ticker, iv
-        FROM options_quotes
-        WHERE is_atm = 1
-          AND asof_date BETWEEN ? AND ?
-          AND iv IS NOT NULL
-    )
-    GROUP BY asof_date, ticker
     """
     # SQLite has no MEDIAN by default; fallback to percentile_cont via pandas aggregation.
     df = pd.read_sql_query(
@@ -88,15 +83,15 @@ def daily_atm_iv_panel(conn: sqlite3.Connection, start: date, end: date) -> pd.D
           AND asof_date BETWEEN ? AND ?
           AND iv IS NOT NULL
         """,
-        conn, params=(start, end), parse_dates=["asof_date"]
+        conn,
+        params=(start, end),
+        parse_dates=["asof_date"],
     )
     if df.empty:
         return pd.DataFrame(columns=["asof_date", "ticker", "atm_iv"])
-    atm = (df.groupby(["asof_date","ticker"])["iv"]
-             .median()
-             .rename("atm_iv")
-             .reset_index())
+    atm = df.groupby(["asof_date", "ticker"])["iv"].median().rename("atm_iv").reset_index()
     return atm
+
 
 def compute_iv_returns(atm_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -111,10 +106,14 @@ def compute_iv_returns(atm_df: pd.DataFrame) -> pd.DataFrame:
     ivret = np.log(pivot).diff()
     return ivret
 
+
 def _shift_series(s: pd.Series, d: int) -> pd.Series:
     return s.shift(-d)  # peer responses “d days ahead” relative to target t
 
-def _pairwise_corr_beta(ivret: pd.DataFrame, horizons: Iterable[int]) -> List[Tuple[pd.Timestamp,str,str,int,float,int,float,int]]:
+
+def _pairwise_corr_beta(
+    ivret: pd.DataFrame, horizons: Iterable[int]
+) -> List[Tuple[pd.Timestamp, str, str, int, float, int, float, int]]:
     """
     For each date,ticker pair and horizon:
       - corr: corr(target_ret_t, peer_ret_{t..t+d})
@@ -122,10 +121,10 @@ def _pairwise_corr_beta(ivret: pd.DataFrame, horizons: Iterable[int]) -> List[Tu
     Returns rows for bulk insert into iv_spillover.
     """
     out_corr, out_beta = [], []
-    if ivret.empty: 
+    if ivret.empty:
         return out_corr + out_beta
 
-    dates = ivret.index
+    ivret.index
     tickers = list(ivret.columns)
 
     for h in horizons:
@@ -133,13 +132,13 @@ def _pairwise_corr_beta(ivret: pd.DataFrame, horizons: Iterable[int]) -> List[Tu
         # We want metrics anchored at date t (current row) where both are present
         for i, tgt in enumerate(tickers):
             x = ivret[tgt]
-            if x.isna().all(): 
+            if x.isna().all():
                 continue
             for j, peer in enumerate(tickers):
-                if peer == tgt: 
+                if peer == tgt:
                     continue
                 y = shifted[peer]
-                pair = pd.concat([x, y], axis=1, keys=["x","y"]).dropna()
+                pair = pd.concat([x, y], axis=1, keys=["x", "y"]).dropna()
                 n = len(pair)
                 if n < 20:
                     continue
@@ -157,7 +156,10 @@ def _pairwise_corr_beta(ivret: pd.DataFrame, horizons: Iterable[int]) -> List[Tu
 
     return out_corr + out_beta
 
-def _xgb_feature_importance(ivret: pd.DataFrame, horizons: Iterable[int]) -> List[Tuple[pd.Timestamp,str,str,int,float,int,float,int]]:
+
+def _xgb_feature_importance(
+    ivret: pd.DataFrame, horizons: Iterable[int]
+) -> List[Tuple[pd.Timestamp, str, str, int, float, int, float, int]]:
     """
     Optional light XGB path: for each target & horizon, predict future target return
     from contemporaneous peers (and optionally lags), record feature gain per peer.
@@ -185,9 +187,14 @@ def _xgb_feature_importance(ivret: pd.DataFrame, horizons: Iterable[int]) -> Lis
             X = df.drop(columns=["y"]).values
             Y = df["y"].values
             model = XGBRegressor(
-                n_estimators=200, max_depth=3, learning_rate=0.05,
-                subsample=0.9, colsample_bytree=0.9, reg_lambda=1.0,
-                random_state=42, n_jobs=1
+                n_estimators=200,
+                max_depth=3,
+                learning_rate=0.05,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                reg_lambda=1.0,
+                random_state=42,
+                n_jobs=1,
             )
             model.fit(X, Y)
             gains = getattr(model, "feature_importances_", None)
@@ -199,9 +206,12 @@ def _xgb_feature_importance(ivret: pd.DataFrame, horizons: Iterable[int]) -> Lis
                 out.append((None, tgt, peer, h, float(g), n, None, None))
     return out
 
-def _bulk_upsert_spillover(conn: sqlite3.Connection,
-                           rows: List[Tuple[Optional[pd.Timestamp],str,str,int,float,int,Optional[float],Optional[int]]],
-                           method: str) -> int:
+
+def _bulk_upsert_spillover(
+    conn: sqlite3.Connection,
+    rows: List[Tuple[Optional[pd.Timestamp], str, str, int, float, int, Optional[float], Optional[int]]],
+    method: str,
+) -> int:
     if not rows:
         return 0
     # Anchor on actual dates present in ivret index; since rows hold None for date,
@@ -214,12 +224,13 @@ def _bulk_upsert_spillover(conn: sqlite3.Connection,
         "VALUES (?,?,?,?,?,?,?) "
         "ON CONFLICT(asof_date,target,peer,horizon_d,method) DO UPDATE SET "
         "value=excluded.value, sample_n=excluded.sample_n, created_at=CURRENT_TIMESTAMP",
-        data
+        data,
     )
     conn.commit()
     return len(data)
 
-def build_spillover_last_90d(cfg: SpilloverConfig) -> Dict[str,int]:
+
+def build_spillover_last_90d(cfg: SpilloverConfig) -> Dict[str, int]:
     """
     Main entry: compute corr, beta, and xgb over the rolling 90-day window.
     Recomputes the last `recompute_tail_days` to stabilize estimates.
@@ -234,7 +245,7 @@ def build_spillover_last_90d(cfg: SpilloverConfig) -> Dict[str,int]:
 
         # Restrict to recent tail for recompute (but correlations use full 90d history)
         # We log the measurement under `asof_date = today`.
-        out_stats = {"corr":0, "beta":0, "xgb":0}
+        out_stats = {"corr": 0, "beta": 0, "xgb": 0}
 
         # Corr + Beta
         rows = _pairwise_corr_beta(ivret, cfg.horizons)

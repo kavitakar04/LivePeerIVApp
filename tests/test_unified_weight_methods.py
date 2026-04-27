@@ -110,10 +110,10 @@ def test_pca_weights(monkeypatch):
     )
     _patch_feature_matrix(monkeypatch, feature_df)
     monkeypatch.setattr(
-        "analysis.beta_builder._impute_col_median", lambda arr: arr
+        "analysis.unified_weights._impute_col_median", lambda arr: arr
     )
     monkeypatch.setattr(
-        "analysis.beta_builder.pca_regress_weights",
+        "analysis.unified_weights.pca_regress_weights",
         lambda Xp, y, k=None, nonneg=True: np.array([2.0, 1.0]),
     )
     weights = uwc.compute_weights("TGT", ["P1", "P2"], cfg)

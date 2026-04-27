@@ -4,8 +4,6 @@ from __future__ import annotations
 from typing import Dict, Optional, Tuple, Literal
 import numpy as np
 import matplotlib.pyplot as plt
-import sys
-from pathlib import Path
 
 from volModel.sviFit import svi_smile_iv
 from volModel.sabrFit import sabr_smile_iv
@@ -48,16 +46,16 @@ def fit_and_plot_smile(
     bands: Optional[Bands] = None,
     moneyness_grid: Tuple[float, float, int] = (0.8, 1.2, 121),
     show_points: bool = True,
-    call_put: Optional[np.ndarray] = None,   # array of 'C'/'P' per point
-    beta: float = 0.5,              # SABR beta
+    call_put: Optional[np.ndarray] = None,  # array of 'C'/'P' per point
+    beta: float = 0.5,  # SABR beta
     label: Optional[str] = None,
     line_kwargs: Optional[Dict] = None,
-    enable_toggles: bool = True,       # legend/keyboard toggles (all models)
-    use_checkboxes: bool = False,      # keep False by default; legend is primary
+    enable_toggles: bool = True,  # legend/keyboard toggles (all models)
+    use_checkboxes: bool = False,  # keep False by default; legend is primary
 ) -> Dict:
     """
     Plot observed points, model fit, and optional CI on moneyness (K/S).
-    
+
     Supports SVI, SABR, and TPS models with interactive legend toggles.
     All operations are logged to .txt file via db_logger.
     Returns dict: {params, rmse, T, S, series_map or None}
@@ -95,22 +93,19 @@ def fit_and_plot_smile(
     if show_points:
         if cp is not None:
             call_mask = cp == "C"
-            put_mask  = cp == "P"
+            put_mask = cp == "P"
             if call_mask.any():
-                pts_c = ax.scatter(K[call_mask] / S, iv[call_mask],
-                                   s=20, alpha=0.85, color="#1f77b4", label="Calls")
+                pts_c = ax.scatter(K[call_mask] / S, iv[call_mask], s=20, alpha=0.85, color="#1f77b4", label="Calls")
                 if enable_toggles:
                     series_map["Calls"] = [pts_c]
             if put_mask.any():
-                pts_p = ax.scatter(K[put_mask] / S, iv[put_mask],
-                                   s=20, alpha=0.85, color="#d62728", label="Puts")
+                pts_p = ax.scatter(K[put_mask] / S, iv[put_mask], s=20, alpha=0.85, color="#d62728", label="Puts")
                 if enable_toggles:
                     series_map["Puts"] = [pts_p]
             # fallback for any unlabelled rows
             other_mask = ~call_mask & ~put_mask
             if other_mask.any():
-                pts_o = ax.scatter(K[other_mask] / S, iv[other_mask],
-                                   s=20, alpha=0.85, color="grey", label="Other")
+                pts_o = ax.scatter(K[other_mask] / S, iv[other_mask], s=20, alpha=0.85, color="grey", label="Other")
                 if enable_toggles:
                     series_map["Other"] = [pts_o]
         else:
@@ -139,7 +134,9 @@ def fit_and_plot_smile(
 
     # ---- confidence bands
     if bands is not None:
-        ci_fill = ax.fill_between(bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% model-fit CI")
+        ci_fill = ax.fill_between(
+            bands.x / S, bands.lo, bands.hi, alpha=0.20, label=f"{int(bands.level*100)}% model-fit CI"
+        )
         ci_mean = ax.plot(bands.x / S, bands.mean, lw=1, alpha=0.6, linestyle="--")
         if enable_toggles:
             series_map[f"{model.upper()} Confidence Interval"] = [ci_fill, *ci_mean]
@@ -173,7 +170,6 @@ def fit_and_plot_smile(
     if enable_toggles and series_map and ax.figure is not None:
         add_legend_toggles(ax, series_map)  # your improved legend system
         # checkboxes are optional; keep off unless explicitly asked
-
 
     # ---- fit quality
     rmse = float(fit_params.get("rmse", np.nan)) if isinstance(fit_params, dict) else np.nan

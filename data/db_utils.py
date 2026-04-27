@@ -11,13 +11,7 @@ from .quote_quality import normalize_market_fields, to_float
 import os
 
 # Allow override via environment variable; fallback to the old logic
-import os
-
-# Allow override via environment variable; fallback to the old logic
-DB_PATH = os.getenv(
-    "DB_PATH",
-    __file__.replace("db_utils.py", "iv_data.db")
-)
+DB_PATH = os.getenv("DB_PATH", __file__.replace("db_utils.py", "iv_data.db"))
 
 
 def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
@@ -29,15 +23,9 @@ def get_conn(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 def ensure_indexes(conn: sqlite3.Connection) -> None:
     """Create indexes used by common query patterns if they don't exist."""
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_options_quotes_ticker ON options_quotes(ticker)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_options_quotes_asof_date ON options_quotes(asof_date)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_options_quotes_is_atm ON options_quotes(is_atm)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_options_quotes_ticker ON options_quotes(ticker)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_options_quotes_asof_date ON options_quotes(asof_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_options_quotes_is_atm ON options_quotes(is_atm)")
     conn.commit()
 
 
@@ -50,9 +38,7 @@ def check_db_health(conn: sqlite3.Connection) -> None:
     """Run a quick integrity check and raise if the database is corrupt."""
     status = conn.execute("PRAGMA quick_check").fetchone()
     if not status or status[0] != "ok":
-        raise sqlite3.DatabaseError(
-            f"Database health check failed: {status[0] if status else 'unknown'}"
-        )
+        raise sqlite3.DatabaseError(f"Database health check failed: {status[0] if status else 'unknown'}")
 
 
 def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
@@ -60,13 +46,13 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
     for q in quotes:
         # Ensure dates are strings, not Timestamp objects
         asof_date = q["asof_date"]
-        if hasattr(asof_date, 'strftime'):  # pandas Timestamp or datetime
-            asof_date = asof_date.strftime('%Y-%m-%d') if hasattr(asof_date, 'strftime') else str(asof_date)
-        
+        if hasattr(asof_date, "strftime"):  # pandas Timestamp or datetime
+            asof_date = asof_date.strftime("%Y-%m-%d") if hasattr(asof_date, "strftime") else str(asof_date)
+
         expiry = q["expiry"]
-        if hasattr(expiry, 'strftime'):  # pandas Timestamp or datetime
-            expiry = expiry.strftime('%Y-%m-%d') if hasattr(expiry, 'strftime') else str(expiry)
-        
+        if hasattr(expiry, "strftime"):  # pandas Timestamp or datetime
+            expiry = expiry.strftime("%Y-%m-%d") if hasattr(expiry, "strftime") else str(expiry)
+
         volume = q.get("volume", q.get("volume_raw"))
         bid = q.get("bid", q.get("bid_raw"))
         ask = q.get("ask", q.get("ask_raw"))
@@ -87,14 +73,37 @@ def insert_quotes(conn: sqlite3.Connection, quotes: Iterable[dict]) -> int:
         volume = to_float(volume)
         open_interest = to_float(open_interest)
 
-        rows.append((
-            asof_date, q["ticker"], expiry, float(q["K"]), q["call_put"],
-            q.get("sigma"), q.get("S"), q.get("T"), q.get("moneyness"), q.get("log_moneyness"), q.get("delta"),
-            1 if q.get("is_atm") else 0,
-            volume, open_interest, bid, ask, mid,
-            q.get("r"), q.get("q"), q.get("price"), q.get("gamma"), q.get("vega"), q.get("theta"), q.get("rho"), q.get("d1"), q.get("d2"),
-            q.get("vendor", "yfinance"),
-        ))
+        rows.append(
+            (
+                asof_date,
+                q["ticker"],
+                expiry,
+                float(q["K"]),
+                q["call_put"],
+                q.get("sigma"),
+                q.get("S"),
+                q.get("T"),
+                q.get("moneyness"),
+                q.get("log_moneyness"),
+                q.get("delta"),
+                1 if q.get("is_atm") else 0,
+                volume,
+                open_interest,
+                bid,
+                ask,
+                mid,
+                q.get("r"),
+                q.get("q"),
+                q.get("price"),
+                q.get("gamma"),
+                q.get("vega"),
+                q.get("theta"),
+                q.get("rho"),
+                q.get("d1"),
+                q.get("d2"),
+                q.get("vendor", "yfinance"),
+            )
+        )
 
     if rows:
         with conn:
@@ -122,7 +131,7 @@ def get_most_recent_date(conn: sqlite3.Connection, ticker: Optional[str] = None)
     else:
         sql = "SELECT MAX(asof_date) FROM options_quotes"
         params = []
-    
+
     result = conn.execute(sql, params).fetchone()
     return result[0] if result and result[0] else None
 
@@ -135,7 +144,7 @@ def fetch_quotes(
 ):
     """
     Fetch options quotes from database.
-    
+
     Parameters:
     -----------
     conn : sqlite3.Connection
@@ -149,11 +158,11 @@ def fetch_quotes(
     """
     sql = "SELECT * FROM options_quotes WHERE 1=1"
     params: list = []
-    
+
     if ticker:
         sql += " AND ticker = ?"
         params.append(ticker)
-    
+
     if asof_date:
         sql += " AND asof_date = ?"
         params.append(asof_date)
@@ -163,7 +172,7 @@ def fetch_quotes(
         if recent_date:
             sql += " AND asof_date = ?"
             params.append(recent_date)
-    
+
     sql += " ORDER BY ticker, asof_date, expiry, strike, call_put"
     return conn.execute(sql, params).fetchall()
 
@@ -197,7 +206,9 @@ def fetch_vol_shifts(
     """
 
     if tickers is None:
-        tickers = [row[0] for row in conn.execute("SELECT DISTINCT ticker FROM options_quotes")]  # type: ignore[assignment]
+        tickers = [  # type: ignore[assignment]
+            row[0] for row in conn.execute("SELECT DISTINCT ticker FROM options_quotes")
+        ]
 
     results: list[pd.DataFrame] = []
     for t in tickers:

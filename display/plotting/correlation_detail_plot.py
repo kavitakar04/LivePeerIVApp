@@ -34,7 +34,6 @@ from analysis.settings import (
     DEFAULT_WEIGHT_POWER,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers to compute ATM curves and correlations without using fixed pillars
 # ---------------------------------------------------------------------------
@@ -273,7 +272,7 @@ def plot_correlation_details(
         )
         return
 
-    coverage = view_data.coverage if view_data is not None else _coverage_by_ticker(corr_df, atm_df)
+    view_data.coverage if view_data is not None else _coverage_by_ticker(corr_df, atm_df)
     overlap = view_data.overlap if view_data is not None else _overlap_counts(corr_df, atm_df)
     has_weights = bool(weights is not None and not weights.dropna().empty)
     _, weight_ax = _reserve_correlation_layout(

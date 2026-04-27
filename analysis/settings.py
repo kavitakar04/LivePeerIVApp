@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-
 # Vol surface and ATM extraction
 DEFAULT_SURFACE_TENORS: Tuple[int, ...] = (7, 30, 60, 90, 180, 365)
 DEFAULT_MONEYNESS_BINS: Tuple[Tuple[float, float], ...] = (

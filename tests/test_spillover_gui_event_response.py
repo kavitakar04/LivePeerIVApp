@@ -5,6 +5,7 @@ from display.gui.spillover_gui import (
     compute_rolling_spillover_signal,
     compute_trigger_event_response,
     prepare_spillover_summary_display,
+    to_plot_percent,
 )
 
 
@@ -129,3 +130,9 @@ def test_prepare_spillover_summary_display_does_not_truncate_rows():
     assert len(out) == 60
     assert out.iloc[0]["hit_rate"] == summary["hit_rate"].max()
     assert out.iloc[-1]["hit_rate"] == summary["hit_rate"].min()
+
+
+def test_to_plot_percent_matches_table_percentage_units():
+    out = to_plot_percent(pd.Series([-0.0824, 0.125]))
+
+    assert np.allclose(out, [-8.24, 12.5])

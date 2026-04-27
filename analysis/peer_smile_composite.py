@@ -31,7 +31,9 @@ def _slice_to_arrays(data) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarr
     )
 
 
-def _filter_peer_quotes(S: float, K: np.ndarray, IV: np.ndarray, mny_range: tuple[float, float]) -> tuple[np.ndarray, np.ndarray]:
+def _filter_peer_quotes(
+    S: float, K: np.ndarray, IV: np.ndarray, mny_range: tuple[float, float]
+) -> tuple[np.ndarray, np.ndarray]:
     mny = K / float(S)
     finite = np.isfinite(K) & np.isfinite(IV) & np.isfinite(mny)
     lo, hi = mny_range
@@ -100,7 +102,16 @@ def build_peer_smile_composite(
             float(target_T),
             skipped,
         )
-        return {"moneyness": grid, "iv": np.array([], dtype=float), "peer_curves": curves, "weights": {}, "skipped": skipped}
+        return {
+            "moneyness": np.array([], dtype=float),
+            "iv": np.array([], dtype=float),
+            "requested_moneyness": grid,
+            "peer_curves": curves,
+            "weights": {},
+            "skipped": skipped,
+            "degraded": True,
+            "reason": "no valid peer smile curves",
+        }
 
     w = pd.Series(raw_weights, dtype=float).reindex(curves.keys()).replace([np.inf, -np.inf], np.nan).fillna(0.0)
     if (w < 0).any() or float(w.sum()) <= 0:
@@ -109,10 +120,14 @@ def build_peer_smile_composite(
 
     curve_matrix = np.vstack([curves[p] for p in w.index])
     composite = np.average(curve_matrix, axis=0, weights=w.to_numpy(float))
-    envelope_ok = bool(np.all(composite >= np.nanmin(curve_matrix, axis=0) - 1e-10) and np.all(composite <= np.nanmax(curve_matrix, axis=0) + 1e-10))
+    envelope_ok = bool(
+        np.all(composite >= np.nanmin(curve_matrix, axis=0) - 1e-10)
+        and np.all(composite <= np.nanmax(curve_matrix, axis=0) + 1e-10)
+    )
 
     LOGGER.info(
-        "peer smile composite built: grid=[%.3f, %.3f] points=%d model=%s peers_used=%s skipped=%s envelope_ok=%s weights=%s",
+        "peer smile composite built: grid=[%.3f, %.3f] points=%d model=%s "
+        "peers_used=%s skipped=%s envelope_ok=%s weights=%s",
         float(lo),
         float(hi),
         int(n),
@@ -129,6 +144,7 @@ def build_peer_smile_composite(
         "weights": {k: float(v) for k, v in w.items()},
         "skipped": skipped,
         "envelope_ok": envelope_ok,
+        "degraded": False,
     }
 
 

@@ -48,6 +48,7 @@ def get_smile_slice(
 
     if asof_date is None:
         from data.db_utils import get_most_recent_date
+
         asof_date = get_most_recent_date(conn, ticker)
         if asof_date is None:
             return pd.DataFrame()
@@ -217,10 +218,7 @@ def prepare_smile_data(
         def _cached(model: str) -> Optional[Dict[str, float]]:
             if params_cache.empty:
                 return None
-            sub = params_cache[
-                (params_cache["tenor_d"] == tenor_d)
-                & (params_cache["model"] == model)
-            ]
+            sub = params_cache[(params_cache["tenor_d"] == tenor_d) & (params_cache["model"] == model)]
             if sub.empty:
                 return None
             return sub.set_index("param")["value"].to_dict()
@@ -231,7 +229,12 @@ def prepare_smile_data(
         svi_params = _cached("svi")
         if not svi_params:
             svi_params, quality_map["svi"] = quality_checked_result(
-                "svi", fit_model_params("svi", S, K, T_val, IV), S, K, T_val, IV,
+                "svi",
+                fit_model_params("svi", S, K, T_val, IV),
+                S,
+                K,
+                T_val,
+                IV,
             )
             try:
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
@@ -243,7 +246,12 @@ def prepare_smile_data(
         sabr_params = _cached("sabr")
         if not sabr_params:
             sabr_params, quality_map["sabr"] = quality_checked_result(
-                "sabr", fit_model_params("sabr", S, K, T_val, IV), S, K, T_val, IV,
+                "sabr",
+                fit_model_params("sabr", S, K, T_val, IV),
+                S,
+                K,
+                T_val,
+                IV,
             )
             try:
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
@@ -256,7 +264,12 @@ def prepare_smile_data(
         if not tps_params:
             try:
                 tps_params, quality_map["tps"] = quality_checked_result(
-                    "tps", fit_model_params("tps", S, K, T_val, IV), S, K, T_val, IV,
+                    "tps",
+                    fit_model_params("tps", S, K, T_val, IV),
+                    S,
+                    K,
+                    T_val,
+                    IV,
                 )
                 exp_str = str(expiry_dt) if expiry_dt is not None else None
                 if tps_params:
@@ -264,8 +277,12 @@ def prepare_smile_data(
             except Exception:
                 tps_params = {}
                 quality_map["tps"] = {
-                    "ok": False, "reason": "fit failed", "rmse": np.nan,
-                    "min_iv": np.nan, "max_iv": np.nan, "n": int(np.isfinite(IV).sum()),
+                    "ok": False,
+                    "reason": "fit failed",
+                    "rmse": np.nan,
+                    "min_iv": np.nan,
+                    "max_iv": np.nan,
+                    "n": int(np.isfinite(IV).sum()),
                 }
 
         sens_params = _cached("sens")
@@ -319,7 +336,11 @@ def prepare_smile_data(
                 tgt_surface = surfaces[target][asof_ts]
             peer_surfaces = {p: surfaces[p] for p in peers if p in surfaces}
             if peer_surfaces:
-                w = {p: float(weights.get(p, 1.0)) for p in peer_surfaces} if weights else {p: 1.0 for p in peer_surfaces}
+                w = (
+                    {p: float(weights.get(p, 1.0)) for p in peer_surfaces}
+                    if weights
+                    else {p: 1.0 for p in peer_surfaces}
+                )
                 synth_by_date = combine_surfaces(peer_surfaces, w)
                 syn_surface = synth_by_date.get(asof_ts)
         except Exception:
@@ -369,6 +390,7 @@ def fit_smile_for(
 
     if asof_date is None:
         from data.db_utils import get_most_recent_date
+
         asof_date = get_most_recent_date(conn, ticker)
         if asof_date is None:
             return VolModel(model=model)
@@ -422,6 +444,7 @@ def sample_smile_curve(
     if actual_date is None:
         conn = get_conn()
         from data.db_utils import get_most_recent_date
+
         actual_date = get_most_recent_date(conn, ticker)
 
     vm = fit_smile_for(ticker, asof_date, model=model, beta=beta, max_expiries=max_expiries)

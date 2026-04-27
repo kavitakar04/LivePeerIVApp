@@ -46,4 +46,3 @@ def term_structure_iv(T: np.ndarray, params: Dict[str, np.ndarray]) -> np.ndarra
     if coeff.size == 0:
         return np.full_like(np.asarray(T, dtype=float), np.nan, dtype=float)
     return np.polyval(coeff, np.asarray(T, dtype=float))
-

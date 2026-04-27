@@ -66,6 +66,29 @@ def test_peer_smile_composite_averages_fitted_peers_on_common_grid(monkeypatch):
     assert out["skipped"] == {}
 
 
+def test_peer_smile_composite_empty_output_has_matching_shapes():
+    out = build_peer_smile_composite(
+        {
+            "P1": {
+                "T_arr": np.array([]),
+                "K_arr": np.array([]),
+                "sigma_arr": np.array([]),
+                "S_arr": np.array([]),
+            }
+        },
+        {"P1": 1.0},
+        model="svi",
+        target_T=30 / 365.25,
+        moneyness_grid=(0.7, 1.3, 121),
+    )
+
+    assert out["moneyness"].shape == out["iv"].shape == (0,)
+    assert out["requested_moneyness"].shape == (121,)
+    assert out["degraded"] is True
+    assert out["reason"] == "no valid peer smile curves"
+    assert out["skipped"] == {"P1": "no finite expiries"}
+
+
 def create_smile_test_db():
     """Create test database with realistic volatility smile data across multiple dates."""
     conn = sqlite3.connect(':memory:', detect_types=sqlite3.PARSE_DECLTYPES)

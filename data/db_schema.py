@@ -98,6 +98,7 @@ MIGRATIONS = [
     ("open_interest", "ALTER TABLE options_quotes ADD COLUMN open_interest REAL"),
 ]
 
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     # Apply additive migrations if columns missing

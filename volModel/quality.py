@@ -6,7 +6,6 @@ import logging
 
 import numpy as np
 
-
 LOGGER = logging.getLogger(__name__)
 _FALLBACK_WARNING_KEYS: set[tuple[str, str, str, str, int, str, str, str]] = set()
 
@@ -118,10 +117,7 @@ def warn_model_fallback(
     metrics = ""
     key_metrics = ("", "", "", 0)
     if quality is not None:
-        metrics = (
-            f" rmse={quality.rmse} min_iv={quality.min_iv} "
-            f"max_iv={quality.max_iv} n={quality.n}"
-        )
+        metrics = f" rmse={quality.rmse} min_iv={quality.min_iv} " f"max_iv={quality.max_iv} n={quality.n}"
         key_metrics = (
             f"{quality.rmse:.8g}" if np.isfinite(quality.rmse) else "nan",
             f"{quality.min_iv:.8g}" if np.isfinite(quality.min_iv) else "nan",

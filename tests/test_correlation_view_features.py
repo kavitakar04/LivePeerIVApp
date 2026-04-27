@@ -148,3 +148,55 @@ def test_relative_weight_matrix_uses_expiry_rank_term_structure(monkeypatch):
     assert captured["weight_mode"] == "corr_iv_atm_ranks"
     assert pm.last_corr_meta["weight_mode"] == "corr_iv_atm_ranks"
     plt.close(fig)
+
+
+def test_relative_weight_matrix_forwards_surface_grid_settings(monkeypatch):
+    pm = PlotManager()
+    captured = {}
+
+    def fake_prepare_correlation_view(**kwargs):
+        captured.update(kwargs)
+        feature_df = pd.DataFrame(
+            [[1.0, 2.0], [1.1, 2.1]],
+            index=["TGT", "P1"],
+            columns=["T7_0.50-0.60", "T14_0.50-0.60"],
+        )
+        return type(
+            "View",
+            (),
+            {
+                "corr_df": pd.DataFrame([[1.0, 0.9], [0.9, 1.0]], index=["TGT", "P1"], columns=["TGT", "P1"]),
+                "weights": pd.Series({"P1": 1.0}),
+                "atm_df": feature_df,
+                "context": {"feature_health": {}, "feature_diagnostics": {"feature_set": "surface_grid"}},
+                "coverage": pd.Series({"TGT": 2, "P1": 2}),
+                "overlap": pd.DataFrame([[2, 2], [2, 2]], index=["TGT", "P1"], columns=["TGT", "P1"]),
+                "finite_count": 4,
+                "total_cells": 4,
+                "finite_ratio": 1.0,
+                "method_label": "PCA",
+                "basis_label": "IV surface grid",
+            },
+        )()
+
+    monkeypatch.setattr("display.gui.gui_plot_manager.prepare_correlation_view", fake_prepare_correlation_view)
+    monkeypatch.setattr("display.gui.gui_plot_manager.plot_correlation_details", lambda *args, **kwargs: None)
+
+    pm.last_settings = {
+        "weight_method": "pca",
+        "feature_mode": "surface_grid",
+        "weight_power": 1.0,
+        "clip_negative": True,
+        "max_expiries": 12,
+        "pillars": [7, 14, 21],
+        "surface_tenors": [7, 14, 21],
+        "mny_bins": ((0.5, 0.6), (0.6, 0.7)),
+    }
+    pm._current_max_expiries = 12
+    fig, ax = plt.subplots()
+
+    pm._plot_corr_matrix(ax, "TGT", ["P1"], "2024-01-01", [7, 14, 21], "pca_surface_grid", 0.05)
+
+    assert captured["tenors"] == [7, 14, 21]
+    assert captured["mny_bins"] == ((0.5, 0.6), (0.6, 0.7))
+    plt.close(fig)

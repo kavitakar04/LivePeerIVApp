@@ -16,9 +16,9 @@ from analysis.term_view import (
 def plot_atm_term_structure(
     ax: plt.Axes,
     atm_df: pd.DataFrame,
-    x_units: str = "years",   # "years" or "days"
+    x_units: str = "years",  # "years" or "days"
     fit: bool = False,
-    show_ci: bool = False,    # draw CI bars if present
+    show_ci: bool = False,  # draw CI bars if present
     show_quote_dispersion: bool = True,
     degree: int = 2,
     target_label: str = "Target ATM",
@@ -85,6 +85,7 @@ def plot_atm_term_structure(
     ax.set_ylabel("ATM IV")
     ax.legend(loc="best", fontsize=8)
     _install_term_hover(ax)
+
 
 def plot_peer_composite_term_structure(
     ax: plt.Axes,
@@ -193,7 +194,14 @@ def plot_term_structure_comparison(
                 hi = pd.to_numeric(synth_curve["atm_hi"], errors="coerce").to_numpy(float)
                 band_mask = mask_syn & np.isfinite(lo) & np.isfinite(hi)
                 if band_mask.any():
-                    ax.fill_between(x_syn[band_mask], lo[band_mask], hi[band_mask], color="tab:orange", alpha=0.16, label="_nolegend_")
+                    ax.fill_between(
+                        x_syn[band_mask],
+                        lo[band_mask],
+                        hi[band_mask],
+                        color="tab:orange",
+                        alpha=0.16,
+                        label="_nolegend_",
+                    )
             line = ax.plot(
                 x_syn[mask_syn],
                 y_syn[mask_syn],
@@ -203,7 +211,9 @@ def plot_term_structure_comparison(
                 label="Peer composite",
                 zorder=3,
             )[0]
-            line.term_tooltip = _term_tooltip_text("Peer composite", synth_curve.loc[mask_syn].copy(), x_syn[mask_syn], y_syn[mask_syn])
+            line.term_tooltip = _term_tooltip_text(
+                "Peer composite", synth_curve.loc[mask_syn].copy(), x_syn[mask_syn], y_syn[mask_syn]
+            )
             line.set_picker(5)
 
     if title:
@@ -218,7 +228,9 @@ def plot_term_structure_comparison(
     ax.grid(True, alpha=0.2)
 
 
-def _plot_term_band(ax: plt.Axes, x: np.ndarray, curve: pd.DataFrame, mask: np.ndarray, *, color=None, alpha: float = 0.12) -> None:
+def _plot_term_band(
+    ax: plt.Axes, x: np.ndarray, curve: pd.DataFrame, mask: np.ndarray, *, color=None, alpha: float = 0.12
+) -> None:
     if curve is None or curve.empty or not {"atm_lo", "atm_hi"}.issubset(curve.columns):
         return
     lo = pd.to_numeric(curve["atm_lo"], errors="coerce").to_numpy(float)
@@ -246,10 +258,21 @@ def _plot_quote_dispersion_lines(
     if not line_mask.any():
         return
     lo = np.clip(y - disp, 0.0, None)
-    hi = y + disp
-    style = {"color": color, "lw": 0.75, "alpha": 0.45, "linestyle": ":", "zorder": zorder}
-    ax.plot(x[line_mask], lo[line_mask], label=label, **style)
-    ax.plot(x[line_mask], hi[line_mask], label="_nolegend_", **style)
+    lower = y - lo
+    upper = disp
+    ax.errorbar(
+        x[line_mask],
+        y[line_mask],
+        yerr=np.vstack([lower[line_mask], upper[line_mask]]),
+        fmt="none",
+        ecolor=color,
+        elinewidth=0.85,
+        capsize=2.5,
+        capthick=0.85,
+        alpha=0.50,
+        label=label,
+        zorder=zorder,
+    )
 
 
 def _term_tooltip_text(label: str, curve: pd.DataFrame, x_plot: np.ndarray, y: np.ndarray) -> list[str]:

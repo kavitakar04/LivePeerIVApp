@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-
 STORE_MIN_MONEYNESS = 0.10
 STORE_MAX_MONEYNESS = 5.00
 ANALYTICS_MIN_MONEYNESS = 0.20

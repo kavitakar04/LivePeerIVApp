@@ -42,6 +42,7 @@ except Exception:
     def _fit_sabr_slice(*_a, **_k):
         raise RuntimeError("SABR fitter unavailable")
 
+
 try:
     from volModel.polyFit import fit_tps_slice as _fit_tps_slice, tps_smile_iv as _tps_iv
 
@@ -261,7 +262,9 @@ def compute_atm_by_expiry(
         g = g.dropna(subset=["moneyness", "sigma"])
         near_atm = g.loc[(g["moneyness"] - 1.0).abs() <= atm_band]
         dispersion_obs = near_atm["sigma"] if len(near_atm) >= 2 else g["sigma"]
-        obs_std = float(pd.to_numeric(dispersion_obs, errors="coerce").std(ddof=1)) if len(dispersion_obs) >= 2 else np.nan
+        obs_std = (
+            float(pd.to_numeric(dispersion_obs, errors="coerce").std(ddof=1)) if len(dispersion_obs) >= 2 else np.nan
+        )
 
         if method == "single":
             if "is_atm" in g.columns and pd.to_numeric(g["is_atm"], errors="coerce").fillna(0).astype(int).eq(1).any():
@@ -358,9 +361,7 @@ def compute_atm_by_expiry(
             "skew": float(res.get("skew", np.nan)),
             "curv": float(res.get("curv", np.nan)),
             "spot": float(np.nanmedian(g["S"])) if "S" in g.columns else np.nan,
-            "atm_strike": float(g.loc[int((g["moneyness"] - 1.0).abs().idxmin()), "K"])
-            if "K" in g.columns
-            else np.nan,
+            "atm_strike": float(g.loc[int((g["moneyness"] - 1.0).abs().idxmin()), "K"]) if "K" in g.columns else np.nan,
             "iv_source": "sigma",
             "extraction_status": str(res.get("model", "unknown")),
         }

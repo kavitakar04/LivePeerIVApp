@@ -7,6 +7,7 @@ with how configuration values influence computations without using the GUI.
 import sqlite3
 import pandas as pd
 import pytest
+import numpy as np
 from unittest.mock import patch
 from typing import Dict
 import os
@@ -214,6 +215,72 @@ def test_use_atm_only_filters_rows(test_db):
         assert atm_data_points <= all_data_points
         print(f"All options data points: {all_data_points}")
         print(f"ATM-only data points: {atm_data_points}")
+
+
+def test_fit_sampled_surface_grid_is_dense_on_requested_axes(test_db, monkeypatch):
+    """Fit-sampled surface grids should populate requested tenors and K/S bins."""
+    tenors = (7, 14, 21, 28)
+    mny_bins = ((0.90, 1.00), (1.00, 1.10))
+
+    def fake_fit(model, S, K, T, IV):
+        return {"spot": S, "T": T}, {"ok": True, "n": len(K)}
+
+    def fake_predict(model, S, K, T, params):
+        return 0.20 + 0.01 * (np.asarray(K, dtype=float) / float(S)) + 0.001 * float(T)
+
+    monkeypatch.setattr("analysis.model_fit_service.fit_valid_model_result", fake_fit)
+    monkeypatch.setattr("analysis.model_fit_service.predict_model_iv", fake_predict)
+
+    with patch("analysis.peer_composite_builder.get_conn", return_value=test_db):
+        surf = build_surface_grids(
+            tickers=["SPY"],
+            tenors=tenors,
+            mny_bins=mny_bins,
+            max_expiries=2,
+            surface_source="fit",
+            model="svi",
+        )
+
+    date = pd.to_datetime("2024-01-15")
+    grid = surf["SPY"][date]
+    assert list(grid.columns) == list(tenors)
+    assert list(grid.index) == ["0.90-1.00", "1.00-1.10"]
+    assert grid.shape == (len(mny_bins), len(tenors))
+    assert grid.notna().sum().sum() == len(mny_bins) * len(tenors)
+
+
+def test_surface_feature_matrix_fit_mode_counts_full_grid(test_db, monkeypatch):
+    """Surface-grid feature n should reflect all requested fit-sampled cells."""
+    from analysis.analysis_pipeline import get_surface_grids_cached
+    from analysis.unified_weights import surface_feature_matrix
+
+    tenors = (7, 14, 21, 28)
+    mny_bins = ((0.90, 1.00), (1.00, 1.10))
+
+    def fake_fit(model, S, K, T, IV):
+        return {"spot": S, "T": T}, {"ok": True, "n": len(K)}
+
+    def fake_predict(model, S, K, T, params):
+        return 0.25 + 0.02 * (np.asarray(K, dtype=float) / float(S)) + 0.001 * float(T)
+
+    monkeypatch.setattr("analysis.model_fit_service.fit_valid_model_result", fake_fit)
+    monkeypatch.setattr("analysis.model_fit_service.predict_model_iv", fake_predict)
+    get_surface_grids_cached.cache_clear()
+
+    with patch("analysis.peer_composite_builder.get_conn", return_value=test_db):
+        _grids, X, names = surface_feature_matrix(
+            ["SPY"],
+            "2024-01-15",
+            tenors=tenors,
+            mny_bins=mny_bins,
+            surface_source="fit",
+            model="svi",
+            max_expiries=2,
+            standardize=False,
+        )
+
+    assert X.shape == (1, len(tenors) * len(mny_bins))
+    assert len(names) == len(tenors) * len(mny_bins)
 
 
 def test_tenor_bins_configuration(test_db):

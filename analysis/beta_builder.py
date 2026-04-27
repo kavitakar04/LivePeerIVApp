@@ -1,6 +1,6 @@
 # analysis/beta_builder.py
 from __future__ import annotations
-from typing import Iterable, Optional, Tuple, Dict, List, Union
+from typing import Iterable, Optional, Tuple, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -16,8 +16,7 @@ from analysis.unified_weights import (
     _impute_col_median,  # internal helper reused here
 )
 
-from analysis.pillar_selection import load_atm, nearest_pillars, DEFAULT_PILLARS_DAYS
-from analysis.correlation_utils import compute_atm_corr_pillar_free
+from analysis.pillar_selection import DEFAULT_PILLARS_DAYS
 from analysis.settings import (
     DEFAULT_MONEYNESS_BINS,
     DEFAULT_PILLAR_DAYS,
@@ -104,6 +103,9 @@ def surface_feature_matrix(
     asof: str,
     tenors: Iterable[int] | None = None,
     mny_bins: Iterable[Tuple[float, float]] | None = None,
+    surface_source: str = "fit",
+    model: str = "svi",
+    max_expiries: int | None = None,
     standardize: bool = True,
 ) -> Tuple[Dict[str, Dict[pd.Timestamp, pd.DataFrame]], np.ndarray, List[str]]:
     """Rows=tickers, cols=flattened (tenor × moneyness). Delegates to unified_weights."""
@@ -112,6 +114,9 @@ def surface_feature_matrix(
         asof=asof,
         tenors=tenors,
         mny_bins=mny_bins,
+        surface_source=surface_source,
+        model=model,
+        max_expiries=max_expiries,
         standardize=standardize,
     )
 
@@ -235,11 +240,10 @@ def iv_atm_betas(benchmark: str, pillar_days: Iterable[int] = DEFAULT_PILLARS_DA
     from analysis.correlation_utils import compute_atm_corr_pillar_free
 
     conn = get_conn()
-    date_df = pd.read_sql_query(
-        "SELECT DISTINCT asof_date FROM options_quotes ORDER BY asof_date DESC LIMIT 30", conn
-    )
+    date_df = pd.read_sql_query("SELECT DISTINCT asof_date FROM options_quotes ORDER BY asof_date DESC LIMIT 30", conn)
     ticker_df = pd.read_sql_query(
-        "SELECT DISTINCT ticker FROM options_quotes WHERE iv IS NOT NULL AND ttm_years IS NOT NULL ORDER BY ticker", conn
+        "SELECT DISTINCT ticker FROM options_quotes WHERE iv IS NOT NULL AND ttm_years IS NOT NULL ORDER BY ticker",
+        conn,
     )
 
     if date_df.empty or ticker_df.empty:
@@ -295,9 +299,7 @@ def surface_betas(
     if conn_fn is None:
         from data.db_utils import get_conn as conn_fn
     conn = conn_fn()
-    df = pd.read_sql_query(
-        "SELECT asof_date, ticker, ttm_years, moneyness, iv FROM options_quotes", conn
-    )
+    df = pd.read_sql_query("SELECT asof_date, ticker, ttm_years, moneyness, iv FROM options_quotes", conn)
     if df.empty:
         return pd.Series(dtype=float)
 
@@ -311,14 +313,8 @@ def surface_betas(
     df["mny_bin"] = pd.cut(df["moneyness"], bins=edges, labels=labels, include_lowest=True)
     df = df.dropna(subset=["mny_bin"])
 
-    cell = (
-        df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"], observed=True)["iv"]
-        .mean()
-        .reset_index()
-    )
-    grid = cell.pivot_table(
-        index=["asof_date", "ticker"], columns=["tenor_bin", "mny_bin"], values="iv", observed=True
-    )
+    cell = df.groupby(["asof_date", "ticker", "tenor_bin", "mny_bin"], observed=True)["iv"].mean().reset_index()
+    grid = cell.pivot_table(index=["asof_date", "ticker"], columns=["tenor_bin", "mny_bin"], values="iv", observed=True)
     level = grid.mean(axis=1).rename("iv_surface_level").reset_index()
     wide = level.pivot(index="asof_date", columns="ticker", values="iv_surface_level").sort_index()
 
@@ -396,9 +392,7 @@ def iv_surface_betas(
                 if t in available:
                     betas[t] = _beta(wide.rename(columns={t: "x", bench: "b"}), "x", "b")
             if betas:
-                betas_dict[f"T{int(tenor)}_{mny}"] = pd.Series(
-                    betas, name=f"iv_surface_beta_T{int(tenor)}_{mny}"
-                )
+                betas_dict[f"T{int(tenor)}_{mny}"] = pd.Series(betas, name=f"iv_surface_beta_T{int(tenor)}_{mny}")
     return betas_dict
 
 
@@ -416,6 +410,7 @@ def build_vol_betas(
     mode = (mode or "").lower()
     if mode in ("ul", "underlying"):
         from data.db_utils import get_conn
+
         return ul_correlations(benchmark.upper(), get_conn)
     if mode == "iv_atm":
         return iv_atm_betas(benchmark.upper(), pillar_days=pillar_days or DEFAULT_PILLARS_DAYS)
@@ -458,6 +453,7 @@ def peer_weights_from_correlations(
         # try to update UL prices if pipeline available; ignore failures
         try:
             from data.underlying_prices import update_underlying_prices
+
             update_underlying_prices([benchmark] + peers_list)
         except Exception:
             pass
@@ -472,15 +468,11 @@ def peer_weights_from_correlations(
 
     if isinstance(res, dict):
         if not res:
-            raise ValueError(
-                f"No correlation data available for {mode} mode with benchmark {benchmark}"
-            )
+            raise ValueError(f"No correlation data available for {mode} mode with benchmark {benchmark}")
         ser = pd.concat(res).groupby(level=1).mean()
     else:
         if res is None or res.empty:
-            raise ValueError(
-                f"No correlation data available for {mode} mode with benchmark {benchmark}"
-            )
+            raise ValueError(f"No correlation data available for {mode} mode with benchmark {benchmark}")
         ser = res
 
     ser = ser.reindex(peers_list).dropna()
@@ -506,9 +498,7 @@ def corr_weights_from_matrix(
     power: float = 1.0,
 ) -> pd.Series:
     """Correlation-based weights from ticker×feature matrix."""
-    return uw_corr_from_matrix(
-        feature_df, target, peers, clip_negative=clip_negative, power=power
-    )
+    return uw_corr_from_matrix(feature_df, target, peers, clip_negative=clip_negative, power=power)
 
 
 def cosine_similarity_weights_from_matrix(
@@ -519,9 +509,7 @@ def cosine_similarity_weights_from_matrix(
     power: float = 1.0,
 ) -> pd.Series:
     """Cosine similarity weights from ticker×feature matrix."""
-    return uw_cosine_from_matrix(
-        feature_df, target, peers, clip_negative=clip_negative, power=power
-    )
+    return uw_cosine_from_matrix(feature_df, target, peers, clip_negative=clip_negative, power=power)
 
 
 def cosine_similarity_weights(
@@ -536,7 +524,7 @@ def cosine_similarity_weights(
     """Convenience wrapper dispatching to ``build_peer_weights`` for cosine modes."""
     if not mode.startswith("cosine_"):
         raise ValueError("mode must start with 'cosine_'")
-    feature = mode[len("cosine_"):]
+    feature = mode[len("cosine_") :]
     if feature == "ul":
         feature = "ul_px"
     return build_peer_weights(
@@ -601,6 +589,7 @@ def build_peer_weights(
     elif feature == "ul_vol":
         # legacy rolling vol path (kept local)
         from data.db_utils import get_conn as conn_fn
+
         vol = _underlying_vol_series(conn_fn, window=window, min_obs=min_obs)
         if vol is not None and not vol.empty:
             req_cols = [c for c in [target] + peers_list if c in vol.columns]
@@ -648,6 +637,7 @@ def save_correlations(
     """Persist beta/correlation metrics to Parquet files."""
     res = build_vol_betas(mode=mode, benchmark=benchmark, **kwargs)
     import os
+
     os.makedirs(base_path, exist_ok=True)
     paths: list[str] = []
     if isinstance(res, dict):

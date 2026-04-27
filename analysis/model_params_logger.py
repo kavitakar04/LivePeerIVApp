@@ -43,6 +43,7 @@ def _quarantine_corrupt_store(path: Path = STORE_PATH) -> None:
     except Exception:
         pass
 
+
 def append_params(
     asof_date: str,
     ticker: str,
@@ -62,16 +63,18 @@ def append_params(
             fval = float(val)
         except Exception:
             continue
-        rows.append({
-            "asof_date": asof_ts,
-            "ticker": ticker,
-            "expiry": expiry_dt,
-            "tenor_d": tenor_d,
-            "model": model.lower(),
-            "param": key,
-            "value": fval,
-            "fit_meta": _encode_fit_meta(meta),
-        })
+        rows.append(
+            {
+                "asof_date": asof_ts,
+                "ticker": ticker,
+                "expiry": expiry_dt,
+                "tenor_d": tenor_d,
+                "model": model.lower(),
+                "param": key,
+                "value": fval,
+                "fit_meta": _encode_fit_meta(meta),
+            }
+        )
     if not rows:
         return
     df_new = pd.DataFrame(rows)
@@ -83,13 +86,13 @@ def append_params(
             _quarantine_corrupt_store(STORE_PATH)
             df_old = _empty_params_frame()
         df = df_new if df_old.empty else pd.concat([df_old, df_new], ignore_index=True)
-        df = (
-            df.sort_values(["asof_date","ticker","expiry","model","param"])
-              .drop_duplicates(["asof_date","ticker","expiry","model","param"], keep="last")
+        df = df.sort_values(["asof_date", "ticker", "expiry", "model", "param"]).drop_duplicates(
+            ["asof_date", "ticker", "expiry", "model", "param"], keep="last"
         )
     else:
         df = df_new
     df.to_parquet(STORE_PATH, index=False)
+
 
 def load_model_params() -> pd.DataFrame:
     """Load the logged parameters as a DataFrame."""

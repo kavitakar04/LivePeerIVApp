@@ -10,7 +10,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -56,26 +55,22 @@ def repair(db_path: Path, *, backup: bool = True, clear_cache: bool = True) -> d
             )
             stats["deleted_out_of_bounds"] = int(cur.rowcount)
 
-            cur = conn.execute(
-                """
+            cur = conn.execute("""
                 DELETE FROM options_quotes
                 WHERE bid IS NOT NULL
                   AND ask IS NOT NULL
                   AND bid > ask
-                """
-            )
+                """)
             stats["deleted_crossed_markets"] = int(cur.rowcount)
 
-            cur = conn.execute(
-                """
+            cur = conn.execute("""
                 UPDATE options_quotes
                 SET mid = (bid + ask) / 2.0
                 WHERE bid IS NOT NULL
                   AND ask IS NOT NULL
                   AND bid <= ask
                   AND (mid IS NULL OR mid < bid OR mid > ask)
-                """
-            )
+                """)
             stats["recomputed_mid"] = int(cur.rowcount)
 
             if clear_cache:

@@ -6,9 +6,10 @@
 All functions accept scalar floats and return floats. For vectorized usage on
 DataFrames, see `compute_all_greeks_df` at the bottom.
 """
+
 from __future__ import annotations
 import math
-from typing import Literal, Dict, Any
+from typing import Literal, Dict
 
 from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD, get_ticker_interest_rate
 
@@ -32,6 +33,7 @@ def norm_cdf(x: float) -> float:
 # ----------------------
 # Core BS helpers
 # ----------------------
+
 
 def _safe_positive(x: float, eps: float = 1e-12) -> float:
     return x if x > eps else eps
@@ -62,6 +64,7 @@ def bs_d1_d2(
 # Prices
 # ----------------------
 
+
 def bs_price(
     S: float,
     K: float,
@@ -85,6 +88,7 @@ def bs_price(
 # ----------------------
 # Greeks (spot-based, not forward)
 # ----------------------
+
 
 def bs_delta(
     S: float,
@@ -139,7 +143,7 @@ def bs_theta(
     d1, d2 = bs_d1_d2(S, K, T, sigma, r, q)
     df_r = math.exp(-r * T)
     df_q = math.exp(-q * T)
-    term1 = - (S * df_q * norm_pdf(d1) * sigma) / (2.0 * math.sqrt(_safe_positive(T)))
+    term1 = -(S * df_q * norm_pdf(d1) * sigma) / (2.0 * math.sqrt(_safe_positive(T)))
     if cp == "C":
         return term1 - r * K * df_r * norm_cdf(d2) + q * S * df_q * norm_cdf(d1)
     else:
@@ -166,6 +170,7 @@ def bs_rho(
 # ----------------------
 # Convenience: compute all at once
 # ----------------------
+
 
 def compute_all_greeks(
     S: float,
@@ -212,6 +217,7 @@ def compute_all_greeks(
 # Vectorized helper for pandas DataFrames
 # ----------------------
 
+
 def compute_all_greeks_df(
     df,
     r: float = None,  # Changed to None to allow ticker-specific rates
@@ -220,13 +226,14 @@ def compute_all_greeks_df(
     rate_date: str = None,  # Optional specific date for rates
 ):
     """Given a DataFrame with columns S, K, T, sigma, call_put -> add price & Greeks.
-    
+
     If use_ticker_rates=True and 'ticker' column exists, will use ticker-specific rates.
     Otherwise falls back to the provided r or STANDARD_RISK_FREE_RATE.
-    
+
     Modifies a copy and returns it (does not mutate in-place).
     """
     import pandas as pd
+
     out = df.copy()
 
     # Ensure required columns exist
@@ -236,8 +243,8 @@ def compute_all_greeks_df(
         raise ValueError(f"Missing required columns: {missing}")
 
     # Determine if we can use ticker-specific rates
-    has_ticker = 'ticker' in out.columns
-    
+    has_ticker = "ticker" in out.columns
+
     def row_fn(rw):
         # Determine the interest rate to use
         if use_ticker_rates and has_ticker:
@@ -254,7 +261,7 @@ def compute_all_greeks_df(
                 effective_r = r if r is not None else STANDARD_RISK_FREE_RATE
         else:
             effective_r = r if r is not None else STANDARD_RISK_FREE_RATE
-        
+
         g = compute_all_greeks(
             S=float(rw["S"]),
             K=float(rw["K"]),
@@ -265,7 +272,7 @@ def compute_all_greeks_df(
             cp=str(rw["call_put"]).upper(),
         )
         # Add the actual rate used to the output
-        g['r'] = effective_r
+        g["r"] = effective_r
         return pd.Series(g)
 
     greeks_df = out.apply(row_fn, axis=1)

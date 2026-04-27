@@ -18,6 +18,7 @@ from analysis.settings import (
 
 logger = logging.getLogger(__name__)
 
+
 def _normalize_weights(weights: Optional[pd.Series], peers: list[str]) -> Optional[pd.Series]:
     if weights is None or weights.empty:
         return None
@@ -59,7 +60,9 @@ def resolve_peer_weights(
         "pillars_days": pillars,
         "atm_tol_days": settings.get("pillar_tolerance_days"),
         "mny_bins": settings.get("mny_bins"),
-        "tenors": settings.get("surface_tenors"),
+        "tenors": settings.get("surface_tenors") or settings.get("pillars"),
+        "surface_source": settings.get("surface_source", "fit"),
+        "surface_model": settings.get("model", "svi"),
         "surface_missing_policy": settings.get("surface_missing_policy"),
         "surface_min_coverage": settings.get("surface_min_coverage"),
         "max_expiries": settings.get("max_expiries"),
@@ -69,9 +72,15 @@ def resolve_peer_weights(
     weight_kwargs = {k: v for k, v in weight_kwargs.items() if v is not None}
 
     attempts = (
-        lambda: unified_weights.compute_unified_weights(target=target, peers=peers, mode=weight_mode, asof=asof, **weight_kwargs),
-        lambda: unified_weights.compute_unified_weights(target=target, peers=peers, mode=weight_mode, asof=asof, pillar_days=pillars),
-        lambda: unified_weights.compute_unified_weights(target=target, peers=peers, weight_mode=weight_mode, asof=asof, pillar_days=pillars),
+        lambda: unified_weights.compute_unified_weights(
+            target=target, peers=peers, mode=weight_mode, asof=asof, **weight_kwargs
+        ),
+        lambda: unified_weights.compute_unified_weights(
+            target=target, peers=peers, mode=weight_mode, asof=asof, pillar_days=pillars
+        ),
+        lambda: unified_weights.compute_unified_weights(
+            target=target, peers=peers, weight_mode=weight_mode, asof=asof, pillar_days=pillars
+        ),
         lambda: unified_weights.compute_unified_weights(target, peers, weight_mode, asof, pillars),
     )
     for fn in attempts:
@@ -89,8 +98,7 @@ def resolve_peer_weights(
     try:
         if (
             str(weight_mode or "").startswith("corr_")
-            and
-            isinstance(last_corr_df, pd.DataFrame)
+            and isinstance(last_corr_df, pd.DataFrame)
             and not last_corr_df.empty
             and last_corr_meta.get("weight_mode") == weight_mode
             and last_corr_meta.get("clip_negative") == settings.get("clip_negative", DEFAULT_CLIP_NEGATIVE_WEIGHTS)

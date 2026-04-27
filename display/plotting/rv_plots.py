@@ -9,12 +9,10 @@ background thread and hand the finished figure back to Tkinter.
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Optional
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-
 
 __all__ = [
     "plot_surface_residual_heatmap",
@@ -25,6 +23,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Surface residual heatmap (Phase 1 output)
 # ---------------------------------------------------------------------------
+
 
 def _clear_rv_heatmap_colorbar(fig: plt.Figure) -> None:
     """Remove RV heatmap helper axes from a prior redraw."""
@@ -46,6 +45,7 @@ def _clear_rv_heatmap_colorbar(fig: plt.Figure) -> None:
             delattr(fig, "_rv_heatmap_colorbar_ax")
         except Exception:
             pass
+
 
 def plot_surface_residual_heatmap(
     ax: plt.Axes,
@@ -125,8 +125,11 @@ def plot_surface_residual_heatmap(
                 if np.isfinite(v):
                     txt = f"{v:.1f}"
                     ax.text(
-                        j, i, txt,
-                        ha="center", va="center",
+                        j,
+                        i,
+                        txt,
+                        ha="center",
+                        va="center",
                         fontsize=6,
                         color="white" if abs(v) > vmax * 0.65 else "black",
                     )
@@ -148,6 +151,7 @@ def plot_surface_residual_heatmap(
 # ---------------------------------------------------------------------------
 # Skew and curvature spread plot (Phase 2 output)
 # ---------------------------------------------------------------------------
+
 
 def plot_skew_spread(
     ax: plt.Axes,
@@ -172,19 +176,13 @@ def plot_skew_spread(
     """
     ax.clear()
 
-    required = {"T", "T_days", "target_skew", "synth_skew", "skew_spread",
-                "target_curv", "synth_curv", "curv_spread"}
+    required = {"T", "T_days", "target_skew", "synth_skew", "skew_spread", "target_curv", "synth_curv", "curv_spread"}
     if skew_df is None or skew_df.empty or not required.issubset(skew_df.columns):
-        ax.text(0.5, 0.5, "No skew/curvature data", ha="center", va="center",
-                transform=ax.transAxes)
+        ax.text(0.5, 0.5, "No skew/curvature data", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(title or "Skew & Curvature Spread")
         return
 
-    x = (
-        skew_df["T_days"].to_numpy(float)
-        if x_units == "days"
-        else skew_df["T"].to_numpy(float)
-    )
+    x = skew_df["T_days"].to_numpy(float) if x_units == "days" else skew_df["T"].to_numpy(float)
     x_label = "Tenor (days)" if x_units == "days" else "Time to Expiry (years)"
 
     valid = np.isfinite(x)
@@ -201,8 +199,7 @@ def plot_skew_spread(
     if m_tgt.any():
         ax.plot(x[m_tgt], tgt_s[m_tgt], "o-", lw=1.6, label="Target skew", color="tab:blue")
     if m_syn.any():
-        ax.plot(x[m_syn], syn_s[m_syn], "o--", lw=1.3, alpha=0.7, label="Synthetic skew",
-                color="tab:orange")
+        ax.plot(x[m_syn], syn_s[m_syn], "o--", lw=1.3, alpha=0.7, label="Synthetic skew", color="tab:orange")
 
     # Curvature lines on secondary axis
     ax2 = ax.twinx()
@@ -211,11 +208,9 @@ def plot_skew_spread(
     m_tgt_c = valid & np.isfinite(tgt_c)
     m_syn_c = valid & np.isfinite(syn_c)
     if m_tgt_c.any():
-        ax2.plot(x[m_tgt_c], tgt_c[m_tgt_c], "s-", lw=1.0, alpha=0.5,
-                 label="Target curv", color="tab:green")
+        ax2.plot(x[m_tgt_c], tgt_c[m_tgt_c], "s-", lw=1.0, alpha=0.5, label="Target curv", color="tab:green")
     if m_syn_c.any():
-        ax2.plot(x[m_syn_c], syn_c[m_syn_c], "s--", lw=0.9, alpha=0.4,
-                 label="Synth curv", color="tab:red")
+        ax2.plot(x[m_syn_c], syn_c[m_syn_c], "s--", lw=0.9, alpha=0.4, label="Synth curv", color="tab:red")
     ax2.set_ylabel("Curvature", fontsize=8)
     ax2.tick_params(labelsize=7)
 

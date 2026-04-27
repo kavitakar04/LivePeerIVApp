@@ -8,18 +8,18 @@ Data pipeline:
 - renames to DB schema fields ready for insert
 - auto-fetches underlying price history for weight computation
 """
+
 from __future__ import annotations
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Set, Optional
+from typing import Set
 import logging
 
 from .db_utils import get_conn
 from .interest_rates import (
     STANDARD_RISK_FREE_RATE,
     STANDARD_DIVIDEND_YIELD,
-    get_ticker_interest_rate,
 )
 from .greeks import compute_all_greeks_df
 from .underlying_prices import update_underlying_prices
@@ -61,95 +61,99 @@ def _history_period_for_lookback(days: int) -> str:
 
 
 def check_and_update_underlying_prices(
-    tickers: Set[str], 
-    lookback_days: int = DEFAULT_UNDERLYING_LOOKBACK_DAYS,
-    force_update: bool = False
+    tickers: Set[str], lookback_days: int = DEFAULT_UNDERLYING_LOOKBACK_DAYS, force_update: bool = False
 ) -> int:
     """
     Check underlying price data coverage and fetch missing/stale data.
-    
+
     Args:
         tickers: Set of ticker symbols to check
         lookback_days: How many days of history we want
         force_update: If True, always fetch latest data regardless of coverage
-        
+
     Returns:
         Number of rows updated/inserted
     """
     if not tickers:
         return 0
-        
+
     logger.info(f"Checking underlying price coverage for {len(tickers)} tickers...")
-    
+
     conn = get_conn()
     try:
         lookback_days = max(1, int(lookback_days))
     except Exception:
         lookback_days = DEFAULT_UNDERLYING_LOOKBACK_DAYS
 
-    cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
-    today = datetime.now().strftime('%Y-%m-%d')
+    cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    datetime.now().strftime("%Y-%m-%d")
     fetch_period = _history_period_for_lookback(lookback_days)
-    
+
     try:
         # Check what data we already have
-        existing_df = pd.read_sql_query("""
+        existing_df = pd.read_sql_query(
+            """
             SELECT ticker, MIN(asof_date) as earliest, MAX(asof_date) as latest, COUNT(*) as row_count
-            FROM underlying_prices 
+            FROM underlying_prices
             WHERE ticker IN ({})
             GROUP BY ticker
-        """.format(','.join([f"'{t}'" for t in tickers])), conn)
-        
+        """.format(",".join([f"'{t}'" for t in tickers])),
+            conn,
+        )
+
         tickers_to_update = set()
-        
+
         if existing_df.empty or force_update:
             # No data at all, fetch everything
             tickers_to_update = tickers
             logger.info(f"No existing data found, will fetch all {len(tickers)} tickers")
         else:
-            existing_tickers = set(existing_df['ticker'])
+            existing_tickers = set(existing_df["ticker"])
             missing_tickers = tickers - existing_tickers
-            
+
             if missing_tickers:
                 logger.info(f"Missing tickers: {sorted(missing_tickers)}")
                 tickers_to_update.update(missing_tickers)
-            
+
             # Check for stale or incomplete data
             for _, row in existing_df.iterrows():
-                ticker = row['ticker']
-                latest = row['latest']
-                earliest = row['earliest']
-                row_count = row['row_count']
-                
+                ticker = row["ticker"]
+                latest = row["latest"]
+                earliest = row["earliest"]
+                row_count = row["row_count"]
+
                 # Check if data is stale (more than 2 days old)
                 days_stale = (datetime.now() - pd.to_datetime(latest)).days
-                
+
                 # Check if we have insufficient history (less than 80% of requested days)
                 expected_days = lookback_days
                 coverage_ratio = row_count / expected_days
-                
+
                 if days_stale > 2:
                     logger.info(f"Ticker {ticker} data is {days_stale} days stale (latest: {latest})")
                     tickers_to_update.add(ticker)
                 elif coverage_ratio < 0.8:
-                    logger.info(f"Ticker {ticker} has insufficient coverage: {row_count}/{expected_days} days ({coverage_ratio:.1%})")
+                    logger.info(
+                        f"Ticker {ticker} has insufficient coverage: "
+                        f"{row_count}/{expected_days} days ({coverage_ratio:.1%})"
+                    )
                     tickers_to_update.add(ticker)
                 elif earliest > cutoff_date:
                     logger.info(f"Ticker {ticker} history too short: starts {earliest}, need {cutoff_date}")
                     tickers_to_update.add(ticker)
-        
+
         if not tickers_to_update:
             logger.info("All underlying price data is current and complete")
             return 0
-        
+
         logger.info(f"Updating underlying prices for {len(tickers_to_update)} tickers: {sorted(tickers_to_update)}")
-        
+
         # Fetch missing/stale data
         total_updated = update_underlying_prices(tickers_to_update, period=fetch_period)
-        
+
         logger.info(f"Successfully updated {total_updated} underlying price records")
         return total_updated
-        
+
     except Exception as e:
         logger.error(f"Error checking/updating underlying prices: {e}")
         return 0
@@ -162,22 +166,20 @@ def ensure_underlying_price_data(
 ) -> bool:
     """
     Convenience function to ensure underlying price data is available.
-    
+
     Args:
         tickers: List or set of ticker symbols
         force_update: Force update even if data seems current
-        
+
     Returns:
         True if data is available/updated successfully, False otherwise
     """
     if isinstance(tickers, str):
         tickers = [tickers]
-    
+
     try:
         updated_count = check_and_update_underlying_prices(
-            set(str(t).upper() for t in tickers), 
-            lookback_days=lookback_days,
-            force_update=force_update
+            set(str(t).upper() for t in tickers), lookback_days=lookback_days, force_update=force_update
         )
         logger.info(f"Underlying data check complete. Updated {updated_count} records.")
         return True
@@ -197,10 +199,10 @@ def enrich_quotes(
         return raw_df
 
     df = raw_df.copy()
-    
+
     # Auto-update underlying price data for all tickers in this batch
-    if auto_update_underlying and 'ticker' in df.columns:
-        tickers_in_batch = set(df['ticker'].unique())
+    if auto_update_underlying and "ticker" in df.columns:
+        tickers_in_batch = set(df["ticker"].unique())
         logger.info(f"Auto-updating underlying prices for {len(tickers_in_batch)} tickers from options data")
         try:
             updated_count = check_and_update_underlying_prices(
@@ -217,10 +219,10 @@ def enrich_quotes(
     df["asof_date"] = pd.to_datetime(df["asof_date"], utc=True)
     df["T"] = (df["expiry"] - df["asof_date"]).dt.days / 365.25
     df = df[df["T"] > 0]
-    
+
     # Convert timestamps back to ISO strings for database storage
-    df["asof_date"] = df["asof_date"].dt.strftime('%Y-%m-%d')
-    df["expiry"] = df["expiry"].dt.strftime('%Y-%m-%d')
+    df["asof_date"] = df["asof_date"].dt.strftime("%Y-%m-%d")
+    df["expiry"] = df["expiry"].dt.strftime("%Y-%m-%d")
 
     # Vendor IV -> sigma, spot
     df["sigma"] = df["iv_raw"]
@@ -250,7 +252,7 @@ def enrich_quotes(
     # Compute Greeks in bulk (adds: price, delta, gamma, vega, theta, rho, d1, d2)
     # Uses ticker-specific rates if available, falls back to provided r
     df = compute_all_greeks_df(df, r=r, q=q, use_ticker_rates=True)
-    
+
     # Store the rates that were actually used in the calculation
     # The compute_all_greeks_df function handles ticker-specific rates internally
     df["q"] = q
@@ -290,16 +292,38 @@ def enrich_quotes(
 
     # final selection in DB field order (db_utils.insert expects these keys)
     cols = [
-        "asof_date", "ticker", "expiry", "K", "call_put",
-        "sigma", "S", "T", "moneyness", "log_moneyness", "delta", "is_atm",
-        "volume_raw", "open_interest_raw", "bid_raw", "ask_raw", "mid", "last_raw",
-        "r", "q", "price", "gamma", "vega", "theta", "rho", "d1", "d2",
-        "vendor"
+        "asof_date",
+        "ticker",
+        "expiry",
+        "K",
+        "call_put",
+        "sigma",
+        "S",
+        "T",
+        "moneyness",
+        "log_moneyness",
+        "delta",
+        "is_atm",
+        "volume_raw",
+        "open_interest_raw",
+        "bid_raw",
+        "ask_raw",
+        "mid",
+        "last_raw",
+        "r",
+        "q",
+        "price",
+        "gamma",
+        "vega",
+        "theta",
+        "rho",
+        "d1",
+        "d2",
+        "vendor",
     ]
     # Some raw cols may be missing; add if needed
     for c in ["volume_raw", "open_interest_raw", "bid_raw", "ask_raw", "last_raw"]:
         if c not in out.columns:
             out[c] = None
-
 
     return out[cols]

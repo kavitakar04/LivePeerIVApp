@@ -54,8 +54,13 @@ def detect_available_pillars(
         good_pillars = [p for p, count in pillar_coverage.items() if count > 0]
     return sorted(good_pillars)
 
-def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
-                                  atm_band: float = DEFAULT_ATM_BAND, tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS) -> Optional[float]:
+
+def _atm_by_pillar_from_day_slice(
+    day_df: pd.DataFrame,
+    pillar_days: int,
+    atm_band: float = DEFAULT_ATM_BAND,
+    tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
+) -> Optional[float]:
     """Return ATM IV for the expiry nearest to ``pillar_days`` (within ``tol_days``).
 
     Priority order:
@@ -84,9 +89,7 @@ def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
 
     # 2. Moneyness band
     if "moneyness" in near.columns:
-        cand = pd.to_numeric(
-            near.loc[(near["moneyness"] - 1.0).abs() <= atm_band, "sigma"], errors="coerce"
-        ).dropna()
+        cand = pd.to_numeric(near.loc[(near["moneyness"] - 1.0).abs() <= atm_band, "sigma"], errors="coerce").dropna()
         if not cand.empty:
             return float(cand.median())
         # 3. Nearest-to-ATM single row
@@ -94,6 +97,7 @@ def _atm_by_pillar_from_day_slice(day_df: pd.DataFrame, pillar_days: int,
         return float(near["sigma"].iloc[k])
 
     return float(pd.to_numeric(near["sigma"], errors="coerce").median())
+
 
 def build_atm_matrix(
     get_smile_slice,
@@ -103,7 +107,7 @@ def build_atm_matrix(
     atm_band: float = DEFAULT_ATM_BAND,
     tol_days: float = DEFAULT_PILLAR_TOLERANCE_DAYS,
     min_pillars: int = 3,
-    corr_method: str = "pearson",   # "pearson" | "spearman" | "kendall"
+    corr_method: str = "pearson",  # "pearson" | "spearman" | "kendall"
     demean_rows: bool = False,
     slices: Optional[Dict[str, "pd.DataFrame"]] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -118,11 +122,7 @@ def build_atm_matrix(
     # Build ATM-by-pillar table
     rows = []
     for t in tickers:
-        day_df = (
-            slices.get(t, pd.DataFrame())
-            if slices is not None
-            else get_smile_slice(t, asof, T_target_years=None)
-        )
+        day_df = slices.get(t, pd.DataFrame()) if slices is not None else get_smile_slice(t, asof, T_target_years=None)
         row = {}
         for d in pillars_days:
             row[d] = _atm_by_pillar_from_day_slice(day_df, d, atm_band=atm_band, tol_days=tol_days)
@@ -151,15 +151,17 @@ def build_atm_matrix(
 
     return atm_df, corr_df
 
+
 # ----------------------------
 # ATM extraction compatibility exports
 # ----------------------------
-from analysis.atm_extraction import (
+from analysis.atm_extraction import (  # noqa: F401, E402
     _fit_smile_get_atm,
     atm_curve_for_ticker_on_date,
     compute_atm_by_expiry,
     fit_smile_get_atm,
 )
+
 
 # ----------------------------
 # DB helpers (optional)
@@ -171,32 +173,34 @@ def load_atm(conn=None) -> pd.DataFrame:
         should_close = True
     else:
         should_close = False
-    
+
     try:
         # First try to get pre-flagged ATM data
         df = pd.read_sql_query("SELECT * FROM options_quotes WHERE is_atm = 1", conn)
-        
+
         # If we don't have enough pre-flagged data, dynamically identify ATM options
         if df.empty or len(df) < 100:  # Threshold for sufficient data
             print(f"Warning: Only {len(df)} pre-flagged ATM rows found. Dynamically identifying ATM options...")
-            
+
             # Get all options data with key columns
             all_data = pd.read_sql_query(
-                "SELECT asof_date, ticker, expiry, strike, call_put, iv, spot, ttm_years, moneyness, delta, volume, bid, ask, mid, price, gamma, vega, theta, rho, d1, d2, r, q FROM options_quotes WHERE iv IS NOT NULL AND moneyness IS NOT NULL AND ttm_years IS NOT NULL", 
-                conn
+                "SELECT asof_date, ticker, expiry, strike, call_put, iv, spot, ttm_years, moneyness, "
+                "delta, volume, bid, ask, mid, price, gamma, vega, theta, rho, d1, d2, r, q "
+                "FROM options_quotes WHERE iv IS NOT NULL AND moneyness IS NOT NULL AND ttm_years IS NOT NULL",
+                conn,
             )
-            
+
             if not all_data.empty:
                 # Identify ATM options (moneyness close to 1.0)
-                atm_mask = (all_data['moneyness'] >= 0.95) & (all_data['moneyness'] <= 1.05)
+                atm_mask = (all_data["moneyness"] >= 0.95) & (all_data["moneyness"] <= 1.05)
                 df = all_data[atm_mask].copy()
                 print(f"Dynamically identified {len(df)} ATM options (moneyness 0.95-1.05)")
-        
+
         if not df.empty:
             # Rename columns to match expected interface
-            if 'ttm_years' in df.columns and 'T' not in df.columns:
-                df = df.rename(columns={'ttm_years': 'T'})
-        
+            if "ttm_years" in df.columns and "T" not in df.columns:
+                df = df.rename(columns={"ttm_years": "T"})
+
         return df
     finally:
         if should_close:
@@ -204,6 +208,7 @@ def load_atm(conn=None) -> pd.DataFrame:
                 conn.close()
             except Exception:
                 pass
+
 
 def nearest_pillars(
     df: pd.DataFrame,
@@ -242,6 +247,7 @@ def nearest_pillars(
         return out
     # keep only within tolerance by default
     return out.loc[out["within_tol"]].reset_index(drop=True)
+
 
 # ----------------------------
 # End of file - duplicates removed

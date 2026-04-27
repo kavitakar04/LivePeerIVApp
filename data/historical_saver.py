@@ -62,7 +62,11 @@ def save_for_tickers(
         if len(tickers) > 1:
             download_kwargs["expiries"] = requested_expiries
         raw = download_raw_option_data(t, **download_kwargs)
-        fetched_expiries = sorted(raw["expiry"].astype(str).unique().tolist()) if raw is not None and not raw.empty and "expiry" in raw else []
+        fetched_expiries = (
+            sorted(raw["expiry"].astype(str).unique().tolist())
+            if raw is not None and not raw.empty and "expiry" in raw
+            else []
+        )
         stored_expiries: list[str] = []
         inserted = 0
         if raw is None or raw.empty:
@@ -81,7 +85,9 @@ def save_for_tickers(
             else:
                 if enriched.columns.duplicated().any():
                     enriched = enriched.loc[:, ~enriched.columns.duplicated()].copy()
-                stored_expiries = sorted(enriched["expiry"].astype(str).unique().tolist()) if "expiry" in enriched else []
+                stored_expiries = (
+                    sorted(enriched["expiry"].astype(str).unique().tolist()) if "expiry" in enriched else []
+                )
                 inserted = insert_quotes(conn, enriched.to_dict(orient="records"))
                 total += inserted
                 print(f"Inserted {t}: {len(enriched)} rows")
@@ -113,7 +119,10 @@ def save_for_tickers(
     LAST_COVERAGE_REPORT.extend(coverage_report)
     if coverage_report:
         print("Coverage report:")
-        print("ticker | provider_expiries | requested_expiries | fetched_expiries | stored_expiries | missing_shared_expiries")
+        print(
+            "ticker | provider_expiries | requested_expiries | "
+            "fetched_expiries | stored_expiries | missing_shared_expiries"
+        )
         for row in coverage_report:
             print(
                 f"{row['ticker']} | "
