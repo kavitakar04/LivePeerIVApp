@@ -1,7 +1,7 @@
 import json
 
-from display.gui.gui_input import _persistable_settings, _save_gui_preferences
-from display.gui.gui_input import (
+from display.gui.controls.gui_input import _persistable_settings, _save_gui_preferences
+from display.gui.controls.gui_input import (
     generate_even_mny_bins,
     generate_even_pillars,
     mny_bins_for_axis_settings,

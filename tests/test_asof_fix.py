@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test script to verify the asof date selection fix."""
 
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
+from analysis.weights.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
 
 def test_asof_selection():
     """Test the new robust asof date selection."""

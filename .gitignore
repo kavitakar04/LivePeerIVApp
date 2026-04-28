@@ -39,6 +39,7 @@ ENV/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak-*
 
 # AI agent working directories
 .claude/
@@ -58,7 +59,10 @@ Thumbs.db
 # Project specific
 project_logging/logging_history/
 data/cache/
+data/cache_synth_etf/
 data/gui_settings.json
+data/runtime/
+data/artifacts/
 improved_correlation_matrix.png
 test_correlation_matrix.png
 
@@ -68,4 +72,6 @@ test_animation_integration.py
 test_browser_integration.py
 demo_animation.py
 data/*.parquet
+data/*.parquet.lock
+data/*.parquet.corrupt
 data/*.parquet.corrupt.*

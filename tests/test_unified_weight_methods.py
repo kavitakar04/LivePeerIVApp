@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 
-from analysis.unified_weights import (
+from analysis.weights.unified_weights import (
     UnifiedWeightComputer,
     WeightConfig,
     WeightMethod,
@@ -110,10 +110,10 @@ def test_pca_weights(monkeypatch):
     )
     _patch_feature_matrix(monkeypatch, feature_df)
     monkeypatch.setattr(
-        "analysis.unified_weights._impute_col_median", lambda arr: arr
+        "analysis.weights.unified_weights._impute_col_median", lambda arr: arr
     )
     monkeypatch.setattr(
-        "analysis.unified_weights.pca_regress_weights",
+        "analysis.weights.unified_weights.pca_regress_weights",
         lambda Xp, y, k=None, nonneg=True: np.array([2.0, 1.0]),
     )
     weights = uwc.compute_weights("TGT", ["P1", "P2"], cfg)
@@ -169,11 +169,11 @@ def test_surface_and_surface_grid_feature_sets_are_distinct(monkeypatch):
     native = pd.DataFrame([[1.0, 2.0]], index=["TGT"], columns=["rank0_0.90-1.00", "rank0_1.00-1.10"])
 
     monkeypatch.setattr(
-        "analysis.unified_weights.native_surface_feature_matrix",
+        "analysis.weights.unified_weights.native_surface_feature_matrix",
         lambda tickers, asof, max_expiries, mny_bins: (native, list(native.columns)),
     )
     monkeypatch.setattr(
-        "analysis.unified_weights.surface_feature_matrix",
+        "analysis.weights.unified_weights.surface_feature_matrix",
         lambda tickers, asof, tenors, mny_bins: ({ticker: {} for ticker in tickers}, np.array([[3.0, 4.0]]), ["T30_0.90-1.00", "T60_1.00-1.10"]),
     )
 
@@ -196,7 +196,7 @@ def test_surface_and_surface_grid_feature_sets_are_distinct(monkeypatch):
 
 
 def test_surface_grid_reindexes_mismatched_peer_shapes_before_stacking(monkeypatch):
-    from analysis.unified_weights import surface_feature_matrix
+    from analysis.weights.unified_weights import surface_feature_matrix
 
     asof = pd.Timestamp("2024-01-01")
     grids = {
@@ -224,7 +224,7 @@ def test_surface_grid_reindexes_mismatched_peer_shapes_before_stacking(monkeypat
     }
 
     monkeypatch.setattr(
-        "analysis.unified_weights.get_surface_grids_cached",
+        "analysis.weights.unified_weights.get_surface_grids_cached",
         lambda cfg, key: grids,
         raising=False,
     )
@@ -257,7 +257,7 @@ def test_surface_grid_reindexes_mismatched_peer_shapes_before_stacking(monkeypat
 
 
 def test_surface_missing_policy_drops_sparse_cells():
-    from analysis.unified_weights import _apply_surface_missing_policy
+    from analysis.weights.unified_weights import _apply_surface_missing_policy
 
     features = pd.DataFrame(
         {

@@ -15,11 +15,11 @@ Project root: `/Users/kavitakar/LivePeerIVApp`
 | Data | Stored In | Main Accessors | Notes |
 |---|---|---|---|
 | Raw option chains | `data/iv_data.db::options_quotes` | `data.db_utils.get_conn`, `data.db_utils.fetch_quotes`, `analysis.analysis_pipeline.get_smile_slice` | Primary source for smiles, terms, surfaces, weights. `DB_PATH` can override the file. |
-| Underlying closes | `data/iv_data.db::underlying_prices` | `analysis.unified_weights.underlying_returns_matrix` | Used by `ul` feature modes and fallback weights. |
-| Ticker presets | `data/iv_data.db::ticker_groups` | `data.ticker_groups`, `display.gui.gui_input.InputPanel` | GUI universe presets. |
+| Underlying closes | `data/iv_data.db::underlying_prices` | `analysis.weights.unified_weights.underlying_returns_matrix` | Used by `ul` feature modes and fallback weights. |
+| Ticker presets | `data/iv_data.db::ticker_groups` | `data.ticker_groups`, `display.gui.controls.gui_input.InputPanel` | GUI universe presets. |
 | Interest rates | `data/iv_data.db::interest_rates`, `ticker_interest_rates` | `data.interest_rates`, GUI rate controls | Used during ingestion/Greek enrichment. |
-| Calculation cache | `data/calculations.db::calc_cache` | `analysis.cache_io.compute_or_load`, `analysis.cache_io.WarmupWorker` | Canonical TTL/versioned cache for computed smiles, terms, correlations, surfaces, and warmup artifacts. |
-| Model params | `data/model_params.parquet` | `analysis.model_params_logger` | Fit parameter history shown in parameter views. |
+| Calculation cache | `data/calculations.db::calc_cache` | `analysis.persistence.cache_io.compute_or_load`, `analysis.persistence.cache_io.WarmupWorker` | Canonical TTL/versioned cache for computed smiles, terms, correlations, surfaces, and warmup artifacts. |
+| Model params | `data/model_params.parquet` | `analysis.persistence.model_params_logger` | Fit parameter history shown in parameter views. |
 
 ## Issues
 

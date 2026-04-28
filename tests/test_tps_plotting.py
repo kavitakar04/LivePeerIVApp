@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from volModel.polyFit import fit_tps_slice
-from analysis.confidence_bands import tps_confidence_bands
-from display.plotting.smile_plot import fit_and_plot_smile
+from analysis.surfaces.confidence_bands import tps_confidence_bands
+from display.plotting.charts.smile_plot import fit_and_plot_smile
 
 
 def test_tps_smile_plot_runs():

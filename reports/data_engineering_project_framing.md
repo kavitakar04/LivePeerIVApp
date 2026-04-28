@@ -229,8 +229,8 @@ The unified weight path is:
 ```text
 GUI settings
   -> PlotManager
-  -> analysis.weight_view.resolve_peer_weights
-  -> analysis.unified_weights.compute_unified_weights
+  -> analysis.weights.weight_view.resolve_peer_weights
+  -> analysis.weights.unified_weights.compute_unified_weights
   -> feature construction
   -> method dispatch
   -> validation and diagnostics
@@ -577,7 +577,7 @@ High-value next steps would make the project even more clearly production-grade:
      rates, and weight concentration over time.
 
 9. **Graph feature integration**
-   - Promote `analysis.market_graph` from prototype to live evidence layer for
+   - Promote `analysis.views.market_graph` from prototype to live evidence layer for
      peer scoring and confidence features.
 
 10. **Dataset versioning**

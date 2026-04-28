@@ -1,6 +1,6 @@
 import pandas as pd
 
-from display.gui.gui_plot_manager import _value_for_asof
+from display.gui.controllers.gui_plot_manager import _value_for_asof
 
 
 def test_value_for_asof_matches_string_to_timestamp_key():

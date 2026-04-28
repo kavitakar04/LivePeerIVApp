@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 # Core APIs we want to defend
-from analysis.unified_weights import compute_unified_weights
+from analysis.weights.unified_weights import compute_unified_weights
 from analysis.analysis_pipeline import (
     available_tickers,
     available_dates,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Debug the underlying returns data."""
 
-from analysis.beta_builder import _underlying_log_returns
+from analysis.weights.beta_builder import _underlying_log_returns
 from data.db_utils import get_conn
 import pandas as pd
 

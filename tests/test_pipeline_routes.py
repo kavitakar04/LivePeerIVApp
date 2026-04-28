@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from analysis.weight_service import compute_peer_weights
+from analysis.weights.weight_service import compute_peer_weights
 
 
 def test_compute_peer_weights_dispatch(monkeypatch):
@@ -14,7 +14,7 @@ def test_compute_peer_weights_dispatch(monkeypatch):
         return pd.Series({"PEER": 1.0})
 
     monkeypatch.setattr(
-        "analysis.weight_service.compute_unified_weights",
+        "analysis.weights.weight_service.compute_unified_weights",
         fake_compute_unified_weights,
     )
 
@@ -26,6 +26,6 @@ def test_compute_peer_weights_dispatch(monkeypatch):
 
 def test_pipeline_compute_peer_weights_is_weight_service_facade():
     import analysis.analysis_pipeline as pipeline
-    import analysis.weight_service as weight_service
+    import analysis.weights.weight_service as weight_service
 
     assert pipeline.compute_peer_weights is weight_service.compute_peer_weights

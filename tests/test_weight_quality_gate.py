@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from analysis.unified_weights import (
+from analysis.weights.unified_weights import (
     FeatureSet,
     UnifiedWeightComputer,
     WeightConfig,
@@ -15,7 +15,7 @@ from analysis.unified_weights import (
     _impute_col_median,
     _zscore_cols,
 )
-from display.gui.gui_input import WEIGHT_METHOD_DISPLAY, WEIGHT_METHODS, weight_method_id, weight_method_label
+from display.gui.controls.gui_input import WEIGHT_METHOD_DISPLAY, WEIGHT_METHODS, weight_method_id, weight_method_label
 
 
 def _features(noise: float = 0.0) -> pd.DataFrame:
@@ -121,7 +121,7 @@ def test_corr_fallback_diagnostics_include_rejected_weights(monkeypatch, caplog)
         corr_shrinkage=0.0,
     )
 
-    with caplog.at_level("WARNING", logger="analysis.unified_weights"):
+    with caplog.at_level("WARNING", logger="analysis.weights.unified_weights"):
         weights = computer.compute_weights("TGT", ["P1", "P2"], cfg)
 
     assert np.allclose(weights.to_numpy(float), [0.5, 0.5])

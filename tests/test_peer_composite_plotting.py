@@ -4,16 +4,16 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from analysis.peer_composite_service import PeerCompositeArtifacts
-from display.plotting.peer_composite_viewer import (
+from analysis.services.peer_composite_service import PeerCompositeArtifacts
+from display.plotting.charts.peer_composite_viewer import (
     show_peer_composite,
     _extract_latest,
 )
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
-from display.plotting.smile_plot import plot_peer_composite_smile
-from display.plotting.term_plot import plot_peer_composite_term_structure
-from analysis.confidence_bands import (
+from display.plotting.charts.smile_plot import plot_peer_composite_smile
+from display.plotting.charts.term_plot import plot_peer_composite_term_structure
+from analysis.surfaces.confidence_bands import (
     peer_composite_confidence_bands,
     peer_composite_pillar_bands,
 )
@@ -187,8 +187,8 @@ def test_surface_grid_cache_key_includes_custom_tenors(monkeypatch):
         captured.append(kwargs)
         return {}
 
-    monkeypatch.setattr("display.gui.gui_plot_manager.build_surface_grids", fake_build_surface_grids)
-    monkeypatch.setattr("display.gui.gui_plot_manager.compute_or_load", lambda _name, _payload, builder: builder())
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.build_surface_grids", fake_build_surface_grids)
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.compute_or_load", lambda _name, _payload, builder: builder())
 
     pm = PlotManager()
     pm._get_surface_grids(["TGT"], max_expiries=3, mny_bins=((0.5, 0.6),), tenors=[7, 14, 21])

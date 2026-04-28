@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use("Agg")
 
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def test_plot_manager_animation_support_removed():

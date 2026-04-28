@@ -21,10 +21,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analysis.peer_composite_service import PeerCompositeConfig, PeerCompositeBuilder
-from display.plotting.peer_composite_viewer import show_peer_composite
-from analysis.data_availability_service import ingest_and_process, available_dates
-from analysis.settings import (
+from analysis.services.peer_composite_service import PeerCompositeConfig, PeerCompositeBuilder
+from display.plotting.charts.peer_composite_viewer import show_peer_composite
+from analysis.services.data_availability_service import ingest_and_process, available_dates
+from analysis.config.settings import (
     DEFAULT_PILLAR_DAYS,
     DEFAULT_PILLAR_TOLERANCE_DAYS,
     DEFAULT_RV_LOOKBACK_DAYS,
@@ -95,7 +95,7 @@ def main():
 
     # Fill missing tenors from default if not specified
     if not cfg.tenors:
-        from analysis.peer_composite_builder import DEFAULT_TENORS
+        from analysis.surfaces.peer_composite_builder import DEFAULT_TENORS
 
         cfg.tenors = DEFAULT_TENORS
 

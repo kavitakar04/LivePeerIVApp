@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test script to debug ul weight mode conversion."""
 
-from analysis.unified_weights import WeightConfig
+from analysis.weights.unified_weights import WeightConfig
 
 def test_ul_mode_conversion():
     """Test the canonical 'corr_ul' mode conversion."""
@@ -14,7 +14,7 @@ def test_ul_mode_conversion():
     
     # Test through the actual peer-composite interface
     print("\nTesting through peer-composite interface...")
-    from analysis.peer_composite_service import PeerCompositeBuilder, PeerCompositeConfig
+    from analysis.services.peer_composite_service import PeerCompositeBuilder, PeerCompositeConfig
     
     cfg = PeerCompositeConfig(
         target="SPY",

@@ -29,7 +29,7 @@ from .quote_quality import (
     filter_quotes,
     normalize_market_fields,
 )
-from analysis.settings import DEFAULT_UNDERLYING_LOOKBACK_DAYS
+from analysis.config.settings import DEFAULT_UNDERLYING_LOOKBACK_DAYS
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -74,6 +74,7 @@ def check_and_update_underlying_prices(
     Returns:
         Number of rows updated/inserted
     """
+    tickers = {str(t).upper().strip() for t in tickers if str(t).strip()}
     if not tickers:
         return 0
 
@@ -86,19 +87,21 @@ def check_and_update_underlying_prices(
         lookback_days = DEFAULT_UNDERLYING_LOOKBACK_DAYS
 
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    datetime.now().strftime("%Y-%m-%d")
     fetch_period = _history_period_for_lookback(lookback_days)
 
     try:
+        tickers_list = sorted(tickers)
+        placeholders = ",".join("?" for _ in tickers_list)
         # Check what data we already have
         existing_df = pd.read_sql_query(
-            """
+            f"""
             SELECT ticker, MIN(asof_date) as earliest, MAX(asof_date) as latest, COUNT(*) as row_count
             FROM underlying_prices
-            WHERE ticker IN ({})
+            WHERE ticker IN ({placeholders})
             GROUP BY ticker
-        """.format(",".join([f"'{t}'" for t in tickers])),
+        """,
             conn,
+            params=tickers_list,
         )
 
         tickers_to_update = set()
@@ -155,8 +158,8 @@ def check_and_update_underlying_prices(
         return total_updated
 
     except Exception as e:
-        logger.error(f"Error checking/updating underlying prices: {e}")
-        return 0
+        logger.exception("Error checking/updating underlying prices")
+        raise RuntimeError("failed to check or update underlying price data") from e
 
 
 def ensure_underlying_price_data(

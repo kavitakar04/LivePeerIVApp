@@ -1,5 +1,5 @@
-"""
-GUI module for CleanIV_Correlation project.
+"""GUI package.
 
-This module contains GUI components and browser interfaces.
+Canonical implementation modules live under ``app``, ``controls``,
+``controllers``, and ``panels``.
 """

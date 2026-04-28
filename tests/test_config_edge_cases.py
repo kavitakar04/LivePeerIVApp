@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from analysis.analysis_pipeline import PipelineConfig, build_synthetic_surface
-from analysis.peer_composite_builder import build_surface_grids, combine_surfaces
+from analysis.surfaces.peer_composite_builder import build_surface_grids, combine_surfaces
 from data.db_utils import ensure_initialized
 
 
@@ -133,7 +133,7 @@ def multi_ticker_db():
 
 def test_multiple_tickers_configuration(multi_ticker_db):
     """Test configuration affects multiple tickers consistently."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=multi_ticker_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=multi_ticker_db):
         # Test with multiple tickers
         tickers = ["SPY", "QQQ", "IWM"]
         
@@ -192,7 +192,7 @@ def test_empty_configuration_results():
     """, ('2024-01-15', 'TEST', '2024-02-16', 100.0, 'C', 0.20, 100.0, 0.084, 1.0, 0))
     conn.commit()
     
-    with patch('analysis.peer_composite_builder.get_conn', return_value=conn):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=conn):
         # Configuration that should return no results (ATM-only but no ATM data)
         cfg_empty = PipelineConfig(use_atm_only=True)
         surf_empty = build_surface_grids(tickers=["TEST"], **{
@@ -211,7 +211,7 @@ def test_empty_configuration_results():
 
 def test_synthetic_surface_with_config(multi_ticker_db):
     """Test peer-composite construction with different configurations."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=multi_ticker_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=multi_ticker_db):
         with patch('analysis.analysis_pipeline._get_ro_conn', return_value=multi_ticker_db):
             # Create synthetic surface with equal weights
             weights = {"SPY": 0.5, "QQQ": 0.5}
@@ -255,7 +255,7 @@ def test_synthetic_surface_with_config(multi_ticker_db):
 
 def test_combine_surfaces_functionality(multi_ticker_db):
     """Test the combine_surfaces function with different configurations."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=multi_ticker_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=multi_ticker_db):
         # Build surfaces for individual tickers
         tickers = ["SPY", "QQQ"]
         cfg = PipelineConfig(use_atm_only=True)  # Use ATM-only for cleaner data
@@ -308,7 +308,7 @@ def test_configuration_caching_behavior():
     """, ('2024-01-15', 'TEST', '2024-02-16', 100.0, 'C', 0.20, 100.0, 0.084, 1.0, 1))
     conn.commit()
     
-    with patch('analysis.peer_composite_builder.get_conn', return_value=conn):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=conn):
         # Test different configurations
         cfg1 = PipelineConfig(use_atm_only=True)
         cfg2 = PipelineConfig(use_atm_only=False)

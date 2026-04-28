@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test auto-fetching of underlying price data."""
 
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig
+from analysis.weights.unified_weights import UnifiedWeightComputer, WeightConfig
 from data.data_pipeline import ensure_underlying_price_data, check_and_update_underlying_prices
 import logging
 

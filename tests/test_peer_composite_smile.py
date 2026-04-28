@@ -13,9 +13,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from data.db_utils import ensure_initialized
-from analysis.beta_builder import iv_surface_betas, peer_weights_from_correlations
-from analysis.peer_composite_builder import build_surface_grids, combine_surfaces
-from analysis.peer_smile_composite import build_peer_smile_composite
+from analysis.weights.beta_builder import iv_surface_betas, peer_weights_from_correlations
+from analysis.surfaces.peer_composite_builder import build_surface_grids, combine_surfaces
+from analysis.surfaces.peer_smile_composite import build_peer_smile_composite
 
 
 def test_peer_smile_composite_averages_fitted_peers_on_common_grid(monkeypatch):
@@ -40,8 +40,8 @@ def test_peer_smile_composite_averages_fitted_peers_on_common_grid(monkeypatch):
         x = np.asarray(K, dtype=float) / float(S) - 1.0
         return params["a"] * x**2 + params["b"] * x + params["c"]
 
-    monkeypatch.setattr("analysis.peer_smile_composite.fit_valid_model_params", fake_fit)
-    monkeypatch.setattr("analysis.peer_smile_composite.predict_model_iv", fake_predict)
+    monkeypatch.setattr("analysis.surfaces.peer_smile_composite.fit_valid_model_params", fake_fit)
+    monkeypatch.setattr("analysis.surfaces.peer_smile_composite.predict_model_iv", fake_predict)
 
     peers = {"P1": make_peer(0.20, 0.80), "P2": make_peer(0.30, 0.40)}
     out = build_peer_smile_composite(
@@ -182,7 +182,7 @@ def test_peer_composite_smile_variation(smile_test_db):
         return smile_test_db
     
     with patch('data.db_utils.get_conn', mock_get_conn), \
-         patch('analysis.peer_composite_builder.get_conn', mock_get_conn):
+         patch('analysis.surfaces.peer_composite_builder.get_conn', mock_get_conn):
         
         # Test surface_grid mode (the one that was broken)
         weights = peer_weights_from_correlations(
@@ -236,7 +236,7 @@ def test_multiple_weight_modes_work(smile_test_db):
     modes = ['surface_grid', 'surface', 'iv_atm']
     
     with patch('data.db_utils.get_conn', mock_get_conn), \
-         patch('analysis.peer_composite_builder.get_conn', mock_get_conn):
+         patch('analysis.surfaces.peer_composite_builder.get_conn', mock_get_conn):
         
         for mode in modes:
             # Calculate weights

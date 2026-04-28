@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from analysis.term_data_service import _apply_term_feature_band_policy, prepare_term_data
+from analysis.services.term_data_service import _apply_term_feature_band_policy, prepare_term_data
 
 
 def test_term_surface_policy_does_not_label_dispersion_as_ci():
@@ -25,7 +25,7 @@ def test_term_surface_policy_does_not_label_dispersion_as_ci():
 
 
 def test_weighted_peer_ci_uses_variance_propagation(monkeypatch):
-    import analysis.term_data_service as service
+    import analysis.services.term_data_service as service
 
     def fake_compute(ticker, asof, *, atm_band, min_boot, ci, max_expiries, method="fit"):
         if ticker == "TGT":

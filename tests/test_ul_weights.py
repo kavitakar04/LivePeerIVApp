@@ -3,11 +3,11 @@ import numpy as np
 import pandas as pd
 
 from data.db_utils import ensure_initialized
-from analysis.unified_weights import compute_unified_weights
-from analysis.correlation_utils import corr_weights
+from analysis.weights.unified_weights import compute_unified_weights
+from analysis.weights.correlation_utils import corr_weights
 
 
-def test_ul_weight_mode_uses_correlation(monkeypatch):
+def test_ul_weight_mode_exposes_concentrated_correlation_fallback(monkeypatch):
     conn = sqlite3.connect(":memory:")
     ensure_initialized(conn)
 
@@ -45,8 +45,12 @@ def test_ul_weight_mode_uses_correlation(monkeypatch):
         }
     )
     ret = np.log(df / df.shift(1)).dropna()
-    expected = corr_weights(ret.corr(), "TGT", ["AAA", "BBB"])
+    raw_expected = corr_weights(ret.corr(), "TGT", ["AAA", "BBB"])
 
     pd.testing.assert_series_equal(
-        weights.rename_axis(None), expected.rename_axis(None)
+        raw_expected.rename_axis(None).rename(None), pd.Series({"AAA": 1.0, "BBB": 0.0})
     )
+    pd.testing.assert_series_equal(
+        weights.rename_axis(None), pd.Series({"AAA": 0.5, "BBB": 0.5})
+    )
+    assert "using equal weights" in weights.attrs["weight_warning"]

@@ -9,21 +9,24 @@ from collections.abc import Iterable
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _get_spot(tk: yf.Ticker) -> float | None:
     spot = None
     try:
         spot = tk.info.get("regularMarketPrice")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("spot info lookup failed reason=%s", exc)
     if spot is None:
         try:
             hist = tk.history(period="1d")
             if not hist.empty:
                 spot = float(hist["Close"].iloc[-1])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("spot history lookup failed reason=%s", exc)
     return float(spot) if spot is not None else None
 
 
@@ -48,7 +51,7 @@ def download_raw_option_data(
         expiries_to_fetch = [expiry for expiry in requested if expiry in available]
         missing = [expiry for expiry in requested if expiry not in available]
         if missing:
-            print(f"{ticker}: requested expiries not listed by provider: {missing}")
+            logger.warning("%s requested expiries not listed by provider: %s", ticker, missing)
 
     expiries = expiries_to_fetch
     if not expiries:
@@ -64,7 +67,8 @@ def download_raw_option_data(
     for expiry in expiries[:max_expiries]:
         try:
             opt = tk.option_chain(expiry)
-        except Exception:
+        except Exception as exc:
+            logger.warning("option chain fetch failed ticker=%s expiry=%s reason=%s", ticker, expiry, exc)
             continue
 
         for df, cp in ((opt.calls, "C"), (opt.puts, "P")):

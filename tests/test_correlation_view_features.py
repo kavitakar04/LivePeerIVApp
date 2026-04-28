@@ -1,12 +1,14 @@
 import pandas as pd
 import matplotlib
+import pytest
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from analysis.feature_health import FeatureConstructionResult
-from analysis.correlation_view import prepare_correlation_view
-from display.gui.gui_plot_manager import PlotManager
+from analysis.views.feature_health import FeatureConstructionResult
+from analysis.views.correlation_view import prepare_correlation_view
+from analysis.weights.unified_weights import similarity_matrix_from_features
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def test_correlation_view_uses_selected_weight_feature_matrix(monkeypatch):
@@ -28,9 +30,9 @@ def test_correlation_view_uses_selected_weight_feature_matrix(monkeypatch):
         warnings=[],
         feature_health={"available": True, "summary": feature_df.attrs["feature_diagnostics"]},
     )
-    monkeypatch.setattr("analysis.correlation_view.build_feature_construction_result", lambda **_kwargs: feature_result)
+    monkeypatch.setattr("analysis.views.correlation_view.build_feature_construction_result", lambda **_kwargs: feature_result)
     monkeypatch.setattr(
-        "analysis.correlation_view.maybe_compute_weights",
+        "analysis.views.correlation_view.maybe_compute_weights",
         lambda **_kwargs: pd.Series({"P1": 0.7, "P2": 0.3}),
     )
 
@@ -49,6 +51,27 @@ def test_correlation_view_uses_selected_weight_feature_matrix(monkeypatch):
     assert view.context["similarity_display_method"] == "cosine"
     assert view.corr_df.index.tolist() == ["TGT", "P1", "P2"]
     assert view.weights.to_dict() == {"P1": 0.7, "P2": 0.3}
+
+
+def test_pca_similarity_matrix_uses_regression_weights_not_full_rank_rotation():
+    feature_df = pd.DataFrame(
+        [
+            [1.0, 3.0, 2.0, 5.0],
+            [2.0, 4.0, 2.0, 4.0],
+            [1.0, 2.0, 5.0, 4.0],
+            [3.0, 2.0, 1.0, 2.0],
+        ],
+        index=["TGT", "P1", "P2", "P3"],
+        columns=["f1", "f2", "f3", "f4"],
+    )
+
+    corr = similarity_matrix_from_features(feature_df, method="corr")
+    pca = similarity_matrix_from_features(feature_df, method="pca")
+
+    assert pca.attrs["display_kind"] == "directed_pca_regression_weights"
+    assert pca.loc["TGT", "P1"] != corr.loc["TGT", "P1"]
+    assert pca.loc["TGT", ["P1", "P2", "P3"]].sum() == pytest.approx(1.0)
+    assert pca.loc["TGT", "TGT"] == pytest.approx(1.0)
 
 
 def test_correlation_view_does_not_forward_show_values_to_weight_config(monkeypatch):
@@ -73,11 +96,11 @@ def test_correlation_view_does_not_forward_show_values_to_weight_config(monkeypa
         return pd.Series({"P1": 1.0})
 
     monkeypatch.setattr(
-        "analysis.correlation_view.build_feature_construction_result",
+        "analysis.views.correlation_view.build_feature_construction_result",
         fake_build_feature_construction_result,
     )
     monkeypatch.setattr(
-        "analysis.correlation_view.maybe_compute_weights",
+        "analysis.views.correlation_view.maybe_compute_weights",
         fake_maybe_compute_weights,
     )
 
@@ -130,8 +153,8 @@ def test_relative_weight_matrix_uses_expiry_rank_term_structure(monkeypatch):
     def fake_plot_correlation_details(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("display.gui.gui_plot_manager.prepare_correlation_view", fake_prepare_correlation_view)
-    monkeypatch.setattr("display.gui.gui_plot_manager.plot_correlation_details", fake_plot_correlation_details)
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.prepare_correlation_view", fake_prepare_correlation_view)
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.plot_correlation_details", fake_plot_correlation_details)
 
     pm.last_settings = {
         "weight_method": "corr",
@@ -179,8 +202,8 @@ def test_relative_weight_matrix_forwards_surface_grid_settings(monkeypatch):
             },
         )()
 
-    monkeypatch.setattr("display.gui.gui_plot_manager.prepare_correlation_view", fake_prepare_correlation_view)
-    monkeypatch.setattr("display.gui.gui_plot_manager.plot_correlation_details", lambda *args, **kwargs: None)
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.prepare_correlation_view", fake_prepare_correlation_view)
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.plot_correlation_details", lambda *args, **kwargs: None)
 
     pm.last_settings = {
         "weight_method": "pca",

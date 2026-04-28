@@ -3,7 +3,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def test_term_replots_when_weight_method_changes(monkeypatch):
@@ -24,7 +24,7 @@ def test_term_replots_when_weight_method_changes(monkeypatch):
         return {"atm_curve": pd.DataFrame({"T": [0.1], "atm_vol": [0.2]}), "synth_bands": None}
 
     monkeypatch.setattr(
-        "display.gui.gui_plot_manager.compute_or_load", fake_compute_or_load
+        "display.gui.controllers.gui_plot_manager.compute_or_load", fake_compute_or_load
     )
 
     fig, ax = plt.subplots()

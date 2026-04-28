@@ -1,10 +1,10 @@
 import pandas as pd
 
-from analysis.weight_view import resolve_peer_weights
+from analysis.weights.weight_view import resolve_peer_weights
 
 
 def test_weight_view_uses_matching_cached_correlation(monkeypatch):
-    monkeypatch.setattr("analysis.unified_weights.compute_unified_weights", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("skip")))
+    monkeypatch.setattr("analysis.weights.unified_weights.compute_unified_weights", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("skip")))
     corr_df = pd.DataFrame(
         [[1.0, 0.8], [0.8, 1.0]],
         index=["TARGET", "PEER"],
@@ -40,7 +40,7 @@ def test_weight_view_uses_pillars_as_surface_tenors(monkeypatch):
         captured.update(kwargs)
         return pd.Series({"PEER": 1.0})
 
-    monkeypatch.setattr("analysis.unified_weights.compute_unified_weights", fake_compute_unified_weights)
+    monkeypatch.setattr("analysis.weights.unified_weights.compute_unified_weights", fake_compute_unified_weights)
 
     weights = resolve_peer_weights(
         "TARGET",

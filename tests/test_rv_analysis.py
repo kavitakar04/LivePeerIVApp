@@ -1,5 +1,5 @@
 """
-Unit tests for analysis.rv_analysis.
+Unit tests for analysis.rv.rv_analysis.
 
 Each test uses an in-memory SQLite database populated with minimal synthetic
 options data, matching the same fixture pattern used in tests/test_surfaces.py.
@@ -71,14 +71,14 @@ def _make_surface_df():
 # ---------------------------------------------------------------------------
 
 class TestComputeSurfaceResidual:
-    from analysis.rv_analysis import compute_surface_residual
+    from analysis.rv.rv_analysis import compute_surface_residual
 
     def test_empty_inputs_return_empty(self):
-        from analysis.rv_analysis import compute_surface_residual
+        from analysis.rv.rv_analysis import compute_surface_residual
         assert compute_surface_residual({}, {}) == {}
 
     def test_no_common_dates_return_empty(self):
-        from analysis.rv_analysis import compute_surface_residual
+        from analysis.rv.rv_analysis import compute_surface_residual
         t1 = pd.Timestamp("2024-01-15")
         t2 = pd.Timestamp("2024-01-16")
         tgt = {t1: _make_surface_df()}
@@ -86,7 +86,7 @@ class TestComputeSurfaceResidual:
         assert compute_surface_residual(tgt, syn) == {}
 
     def test_single_date_returns_raw_residual(self):
-        from analysis.rv_analysis import compute_surface_residual
+        from analysis.rv.rv_analysis import compute_surface_residual
         t = pd.Timestamp("2024-01-15")
         tgt_df = _make_surface_df()
         syn_df = _make_surface_df() * 0.9  # target is ~11% richer
@@ -98,7 +98,7 @@ class TestComputeSurfaceResidual:
         assert (arr[np.isfinite(arr)] > 0).all()
 
     def test_multiple_dates_z_scored(self):
-        from analysis.rv_analysis import compute_surface_residual
+        from analysis.rv.rv_analysis import compute_surface_residual
         dates = [pd.Timestamp(f"2024-01-{d:02d}") for d in range(1, 11)]
         rng = np.random.default_rng(42)
         tgt = {}
@@ -114,7 +114,7 @@ class TestComputeSurfaceResidual:
         assert np.isfinite(last).any()
 
     def test_non_overlapping_grid_cells_handled(self):
-        from analysis.rv_analysis import compute_surface_residual
+        from analysis.rv.rv_analysis import compute_surface_residual
         t = pd.Timestamp("2024-01-15")
         tgt_df = _make_surface_df()
         syn_df_extra = _make_surface_df().copy()
@@ -131,7 +131,7 @@ class TestComputeSurfaceResidual:
 
 class TestComputeSkewSpread:
     def test_returns_dataframe_with_expected_columns(self):
-        from analysis.rv_analysis import compute_skew_spread
+        from analysis.rv.rv_analysis import compute_skew_spread
 
         tgt_df = _make_smile_slice("SPY")
         peer_df = _make_smile_slice("QQQ")
@@ -151,7 +151,7 @@ class TestComputeSkewSpread:
             assert expected.issubset(result.columns)
 
     def test_empty_when_no_peers(self):
-        from analysis.rv_analysis import compute_skew_spread
+        from analysis.rv.rv_analysis import compute_skew_spread
 
         def fake_get_smile(ticker, *args, **kwargs):
             return pd.DataFrame()
@@ -161,7 +161,7 @@ class TestComputeSkewSpread:
         assert result.empty
 
     def test_empty_when_target_missing(self):
-        from analysis.rv_analysis import compute_skew_spread
+        from analysis.rv.rv_analysis import compute_skew_spread
 
         def fake_get_smile(ticker, *args, **kwargs):
             return pd.DataFrame()
@@ -177,14 +177,14 @@ class TestComputeSkewSpread:
 
 class TestComputeTermShapeDislocation:
     def test_empty_when_no_data(self):
-        from analysis.rv_analysis import compute_term_shape_dislocation
+        from analysis.rv.rv_analysis import compute_term_shape_dislocation
 
-        with patch("analysis.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
+        with patch("analysis.rv.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
             result = compute_term_shape_dislocation("SPY", ["QQQ"], "2024-01-15")
         assert result == {}
 
     def test_returns_expected_keys(self):
-        from analysis.rv_analysis import compute_term_shape_dislocation
+        from analysis.rv.rv_analysis import compute_term_shape_dislocation
 
         # Construct a valid skew_spread DataFrame
         skew_df = pd.DataFrame({
@@ -201,7 +201,7 @@ class TestComputeTermShapeDislocation:
             "curv_spread": [0.001, 0.001],
         })
 
-        with patch("analysis.rv_analysis.compute_skew_spread", return_value=skew_df):
+        with patch("analysis.rv.rv_analysis.compute_skew_spread", return_value=skew_df):
             result = compute_term_shape_dislocation("SPY", ["QQQ"], "2024-01-15")
 
         expected_keys = {
@@ -213,7 +213,7 @@ class TestComputeTermShapeDislocation:
         assert expected_keys.issubset(result.keys())
 
     def test_finite_values_from_valid_data(self):
-        from analysis.rv_analysis import compute_term_shape_dislocation
+        from analysis.rv.rv_analysis import compute_term_shape_dislocation
 
         skew_df = pd.DataFrame({
             "T": [0.084, 0.247, 0.493],
@@ -229,7 +229,7 @@ class TestComputeTermShapeDislocation:
             "curv_spread": [0.001, 0.001, 0.001],
         })
 
-        with patch("analysis.rv_analysis.compute_skew_spread", return_value=skew_df):
+        with patch("analysis.rv.rv_analysis.compute_skew_spread", return_value=skew_df):
             result = compute_term_shape_dislocation("SPY", ["QQQ"], "2024-01-15")
 
         for key in ("level_spread", "slope_spread"):
@@ -242,7 +242,7 @@ class TestComputeTermShapeDislocation:
 
 class TestGenerateRVSignals:
     def test_returns_dataframe(self):
-        from analysis.rv_analysis import generate_rv_signals
+        from analysis.rv.rv_analysis import generate_rv_signals
 
         def fake_compute_peer_weights(target, peers, weight_mode, **kwargs):
             return pd.Series({p: 1.0 / len(peers) for p in peers})
@@ -261,8 +261,8 @@ class TestGenerateRVSignals:
 
         with patch("analysis.analysis_pipeline.compute_peer_weights", fake_compute_peer_weights):
             with patch("analysis.analysis_pipeline.relative_value_atm_report_corrweighted", fake_rv_report):
-                with patch("analysis.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
-                    with patch("analysis.rv_analysis.compute_term_shape_dislocation", return_value={}):
+                with patch("analysis.rv.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
+                    with patch("analysis.rv.rv_analysis.compute_term_shape_dislocation", return_value={}):
                         result = generate_rv_signals(
                             "SPY", ["QQQ"], asof="2024-01-15",
                             weight_mode="corr_iv_atm",
@@ -272,7 +272,7 @@ class TestGenerateRVSignals:
         assert "signal_type" in result.columns
 
     def test_empty_peers_returns_empty(self):
-        from analysis.rv_analysis import generate_rv_signals
+        from analysis.rv.rv_analysis import generate_rv_signals
 
         def fake_most_recent(*args, **kwargs):
             return "2024-01-15"
@@ -285,7 +285,7 @@ class TestGenerateRVSignals:
         assert isinstance(result, pd.DataFrame)
 
     def test_z_score_filter_applied(self):
-        from analysis.rv_analysis import generate_rv_signals
+        from analysis.rv.rv_analysis import generate_rv_signals
 
         def fake_compute_peer_weights(target, peers, weight_mode, **kwargs):
             return pd.Series({p: 1.0 / len(peers) for p in peers})
@@ -305,8 +305,8 @@ class TestGenerateRVSignals:
 
         with patch("analysis.analysis_pipeline.compute_peer_weights", fake_compute_peer_weights):
             with patch("analysis.analysis_pipeline.relative_value_atm_report_corrweighted", fake_rv_report):
-                with patch("analysis.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
-                    with patch("analysis.rv_analysis.compute_term_shape_dislocation", return_value={}):
+                with patch("analysis.rv.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
+                    with patch("analysis.rv.rv_analysis.compute_term_shape_dislocation", return_value={}):
                         result = generate_rv_signals(
                             "SPY", ["QQQ"], asof="2024-01-15",
                             weight_mode="corr_iv_atm",
@@ -319,7 +319,7 @@ class TestGenerateRVSignals:
         assert abs(float(atm_signals.iloc[0]["z_score"]) - 2.5) < 0.01
 
     def test_adds_actual_peer_atm_signals(self):
-        from analysis.rv_analysis import generate_rv_signals
+        from analysis.rv.rv_analysis import generate_rv_signals
 
         def fake_compute_peer_weights(target, peers, weight_mode, **kwargs):
             return pd.Series({p: 1.0 / len(peers) for p in peers})
@@ -351,8 +351,8 @@ class TestGenerateRVSignals:
         with patch("analysis.analysis_pipeline.compute_peer_weights", fake_compute_peer_weights):
             with patch("analysis.analysis_pipeline.relative_value_atm_report_corrweighted", fake_rv_report):
                 with patch("analysis.analysis_pipeline._fetch_target_atm", fake_fetch_atm):
-                    with patch("analysis.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
-                        with patch("analysis.rv_analysis.compute_term_shape_dislocation", return_value={}):
+                    with patch("analysis.rv.rv_analysis.compute_skew_spread", return_value=pd.DataFrame()):
+                        with patch("analysis.rv.rv_analysis.compute_term_shape_dislocation", return_value={}):
                             result = generate_rv_signals(
                                 "SPY", ["QQQ"], asof="2024-01-15",
                                 weight_mode="corr_iv_atm", lookback=5, min_abs_z=0.0,
@@ -370,8 +370,8 @@ class TestGenerateRVSignals:
 
 class TestGenerateRVOpportunityDashboard:
     def test_dashboard_classifies_clean_signal_as_trade_opportunity(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["ATM Level"],
@@ -423,7 +423,7 @@ class TestGenerateRVOpportunityDashboard:
         assert trade["source_signal"]["signal"]["classification"]["classification"] == "trade"
 
     def test_trade_thesis_uses_integer_contract_package_for_fractional_hedge(self, monkeypatch):
-        from analysis import rv_analysis
+        import analysis.rv.rv_analysis as rv_analysis
 
         target_contracts = [
             {
@@ -490,8 +490,8 @@ class TestGenerateRVOpportunityDashboard:
         assert abs(trade["exposures"]["estimated_net_delta_after_hedge_per_1pct"]) < 1e-9
 
     def test_dashboard_scores_systemic_dislocation_instead_of_hard_rejecting(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["ATM Level"],
@@ -535,8 +535,8 @@ class TestGenerateRVOpportunityDashboard:
         assert any("Systemic" in risk for risk in row["risks"])
 
     def test_dashboard_missing_contracts_becomes_trade_risk_not_hard_reject(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["ATM Level"],
@@ -568,8 +568,8 @@ class TestGenerateRVOpportunityDashboard:
         assert any("manual audit" in reason for reason in row["source_signal"]["classification_reasons"])
 
     def test_dashboard_promotes_near_substitute_without_z_score(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["Curvature"],
@@ -620,8 +620,8 @@ class TestGenerateRVOpportunityDashboard:
         assert trade["source_signal"]["signal"]["classification"]["score_components"]["dislocation_magnitude"] >= 0.70
 
     def test_dashboard_maps_model_features_to_trade_construction_classes(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["Skew", "Curvature", "TS Slope", "Event Bump"],
@@ -700,8 +700,8 @@ class TestGenerateRVOpportunityDashboard:
             assert "spillover_beta" in trade["exposures"]
 
     def test_dashboard_groups_low_score_anomalies(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["ATM Level", "ATM Level", "ATM Level"],
@@ -734,8 +734,8 @@ class TestGenerateRVOpportunityDashboard:
         assert len(row["member_signals"]) == 3
 
     def test_dashboard_turns_raw_signal_into_ranked_opportunity(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["ATM Level"],
@@ -779,8 +779,8 @@ class TestGenerateRVOpportunityDashboard:
         assert payload["executive_summary"]
 
     def test_dashboard_preserves_degraded_context_as_warning(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["Curvature"],
@@ -814,8 +814,8 @@ class TestGenerateRVOpportunityDashboard:
         assert "convexity spread = target smile curvature - weighted peer smile curvature" in row["signal"]["calculation"]["display"]
 
     def test_dashboard_labels_actual_peer_reference(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["ATM Level"],
@@ -850,8 +850,8 @@ class TestGenerateRVOpportunityDashboard:
         assert row["signal"]["magnitude"]["comparison"] == "peer"
 
     def test_model_quality_handles_unreadable_log_without_traceback(self, monkeypatch):
-        from analysis import rv_analysis
-        import analysis.model_params_logger as logger_mod
+        import analysis.rv.rv_analysis as rv_analysis
+        import analysis.persistence.model_params_logger as logger_mod
 
         def broken_load_model_params():
             raise RuntimeError("Couldn't deserialize thrift: TProtocolException: Invalid data")
@@ -865,8 +865,8 @@ class TestGenerateRVOpportunityDashboard:
         assert meta["model"] == "Unknown"
 
     def test_dashboard_attaches_supporting_contracts(self, monkeypatch):
-        from analysis import rv_analysis
-        from analysis.rv_analysis import generate_rv_opportunity_dashboard
+        import analysis.rv.rv_analysis as rv_analysis
+        from analysis.rv.rv_analysis import generate_rv_opportunity_dashboard
 
         raw = pd.DataFrame({
             "signal_type": ["Skew"],
@@ -907,15 +907,15 @@ class TestGenerateRVOpportunityDashboard:
         assert "SPY 2024-02-16 puts" in signal["narrative"]["contracts"]
 
     def test_event_context_classifies_broad_move_as_systemic(self, monkeypatch):
-        from analysis import analysis_pipeline
-        from analysis.rv_analysis import _event_context
+        from analysis.services import data_availability_service
+        from analysis.rv.rv_analysis import _event_context
 
         df = pd.DataFrame({
             "date": ["2024-01-14", "2024-01-14", "2024-01-14", "2024-01-15", "2024-01-15", "2024-01-15"],
             "ticker": ["SPY", "QQQ", "IWM", "SPY", "QQQ", "IWM"],
             "atm_iv": [0.20, 0.21, 0.22, 0.22, 0.225, 0.235],
         })
-        monkeypatch.setattr(analysis_pipeline, "get_daily_iv_for_spillover", lambda tickers: df)
+        monkeypatch.setattr(data_availability_service, "get_daily_iv_for_spillover", lambda tickers: df)
 
         label, meta, warnings = _event_context("SPY", ["QQQ", "IWM"], "2024-01-15", 60)
 
@@ -930,7 +930,7 @@ class TestGenerateRVOpportunityDashboard:
 
 class TestComputeWeightStability:
     def test_returns_dataframe_with_peers_as_index(self):
-        from analysis.rv_analysis import compute_weight_stability
+        from analysis.rv.rv_analysis import compute_weight_stability
 
         iv_data = pd.DataFrame({
             "date": ["2024-01-01"] * 2,
@@ -938,7 +938,7 @@ class TestComputeWeightStability:
             "atm_iv": [0.18, 0.19],
         })
 
-        with patch("analysis.analysis_pipeline.get_daily_iv_for_spillover",
+        with patch("analysis.services.data_availability_service.get_daily_iv_for_spillover",
                    return_value=iv_data):
             result = compute_weight_stability("SPY", ["QQQ"], lookback=30)
 
@@ -947,9 +947,9 @@ class TestComputeWeightStability:
         assert "stable" in result.columns
 
     def test_graceful_fallback_on_empty_data(self):
-        from analysis.rv_analysis import compute_weight_stability
+        from analysis.rv.rv_analysis import compute_weight_stability
 
-        with patch("analysis.analysis_pipeline.get_daily_iv_for_spillover",
+        with patch("analysis.services.data_availability_service.get_daily_iv_for_spillover",
                    return_value=pd.DataFrame()):
             result = compute_weight_stability("SPY", ["QQQ", "IWM"], lookback=30)
 
@@ -962,7 +962,7 @@ class TestComputeWeightStability:
 # ---------------------------------------------------------------------------
 
 def test_public_api_importable():
-    from analysis.rv_analysis import (
+    from analysis.rv.rv_analysis import (
         compute_surface_residual,
         compute_skew_spread,
         compute_term_shape_dislocation,
@@ -977,7 +977,7 @@ def test_public_api_importable():
 
 
 def test_rv_plots_importable():
-    from display.plotting.rv_plots import (
+    from display.plotting.charts.rv_plots import (
         plot_surface_residual_heatmap,
         plot_skew_spread,
     )

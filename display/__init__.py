@@ -1,5 +1,6 @@
-"""
-Display module for CleanIV_Correlation project.
+"""GUI and plotting package.
 
-This module contains GUI and plotting utilities.
+Implementation modules are grouped under ``gui.app``, ``gui.controls``,
+``gui.controllers``, ``gui.panels``, ``plotting.charts``, and
+``plotting.utils``.
 """

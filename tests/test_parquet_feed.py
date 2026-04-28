@@ -1,7 +1,7 @@
 import pandas as pd
 from pathlib import Path
 import tempfile
-from analysis import beta_builder
+import analysis.weights.beta_builder as beta_builder
 from analysis import analysis_pipeline
 
 def test_save_correlations_writes_parquet(monkeypatch):

@@ -1,11 +1,11 @@
 import numpy as np
 
-from analysis.settings import (
+from analysis.config.settings import (
     DEFAULT_SMILE_MONEYNESS_RANGE,
     format_moneyness_range,
     parse_moneyness_range,
 )
-from display.gui.gui_plot_manager import _filter_smile_quotes, _smile_grid_from_settings
+from display.gui.controllers.gui_plot_manager import _filter_smile_quotes, _smile_grid_from_settings
 
 
 def test_parse_moneyness_range_accepts_valid_bounds():

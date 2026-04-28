@@ -17,6 +17,19 @@ DEFAULT_INTEREST_RATE = 0.0408  # 4.08%
 STANDARD_DIVIDEND_YIELD = 0.0
 
 
+def _rate_to_decimal(rate_value: float | int | None) -> Optional[float]:
+    """Normalize stored rate values to decimal units.
+
+    Global rates are stored as decimals (0.0408), while imported ML borrow
+    rates are stored as percentage values (4.08). Accept both so Greek
+    calculations always receive consistent decimal units.
+    """
+    if rate_value is None:
+        return None
+    rate = float(rate_value)
+    return rate / 100.0 if abs(rate) > 1.0 else rate
+
+
 def get_default_dividend_yield() -> float:
     """Get the default dividend yield value."""
     return STANDARD_DIVIDEND_YIELD
@@ -206,7 +219,7 @@ def save_ticker_interest_rates(ticker_rates: List[dict], source_file: str) -> in
 
 
 def get_ticker_interest_rate(ticker: str, rate_date: Optional[str] = None) -> Optional[float]:
-    """Get the interest rate for a specific ticker.
+    """Get the interest rate for a specific ticker in decimal units.
 
     If rate_date is provided, gets the rate for that specific date.
     If rate_date is None, gets the most recent rate for the ticker.
@@ -236,10 +249,10 @@ def get_ticker_interest_rate(ticker: str, rate_date: Optional[str] = None) -> Op
         ).fetchone()
 
     if row:
-        return float(row[0])
+        return _rate_to_decimal(row[0])
 
     # Fallback to default global rate
-    return get_default_interest_rate()
+    return _rate_to_decimal(get_default_interest_rate())
 
 
 def get_most_recent_ticker_rates_date() -> Optional[str]:

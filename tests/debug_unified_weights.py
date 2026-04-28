@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.abspath('.'))
 
 import logging
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
+from analysis.weights.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
 
 # Set up logging to see the debug messages
 logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')

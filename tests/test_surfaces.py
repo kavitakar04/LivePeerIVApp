@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from analysis.analysis_pipeline import PipelineConfig, build_surfaces
-from analysis.peer_composite_builder import build_surface_grids
+from analysis.surfaces.peer_composite_builder import build_surface_grids
 from data.db_utils import ensure_initialized
 
 
@@ -180,7 +180,7 @@ def test_db():
 def test_use_atm_only_filters_rows(test_db):
     """Test that use_atm_only=True filters to only ATM options."""
     # Patch the get_conn function to use our test database
-    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=test_db):
         # Build surfaces with all options
         cfg_all = PipelineConfig(use_atm_only=False)
         surf_all = build_surface_grids(tickers=["SPY"], **{
@@ -228,10 +228,10 @@ def test_fit_sampled_surface_grid_is_dense_on_requested_axes(test_db, monkeypatc
     def fake_predict(model, S, K, T, params):
         return 0.20 + 0.01 * (np.asarray(K, dtype=float) / float(S)) + 0.001 * float(T)
 
-    monkeypatch.setattr("analysis.model_fit_service.fit_valid_model_result", fake_fit)
-    monkeypatch.setattr("analysis.model_fit_service.predict_model_iv", fake_predict)
+    monkeypatch.setattr("analysis.surfaces.model_fit_service.fit_valid_model_result", fake_fit)
+    monkeypatch.setattr("analysis.surfaces.model_fit_service.predict_model_iv", fake_predict)
 
-    with patch("analysis.peer_composite_builder.get_conn", return_value=test_db):
+    with patch("analysis.surfaces.peer_composite_builder.get_conn", return_value=test_db):
         surf = build_surface_grids(
             tickers=["SPY"],
             tenors=tenors,
@@ -252,7 +252,7 @@ def test_fit_sampled_surface_grid_is_dense_on_requested_axes(test_db, monkeypatc
 def test_surface_feature_matrix_fit_mode_counts_full_grid(test_db, monkeypatch):
     """Surface-grid feature n should reflect all requested fit-sampled cells."""
     from analysis.analysis_pipeline import get_surface_grids_cached
-    from analysis.unified_weights import surface_feature_matrix
+    from analysis.weights.unified_weights import surface_feature_matrix
 
     tenors = (7, 14, 21, 28)
     mny_bins = ((0.90, 1.00), (1.00, 1.10))
@@ -263,11 +263,11 @@ def test_surface_feature_matrix_fit_mode_counts_full_grid(test_db, monkeypatch):
     def fake_predict(model, S, K, T, params):
         return 0.25 + 0.02 * (np.asarray(K, dtype=float) / float(S)) + 0.001 * float(T)
 
-    monkeypatch.setattr("analysis.model_fit_service.fit_valid_model_result", fake_fit)
-    monkeypatch.setattr("analysis.model_fit_service.predict_model_iv", fake_predict)
+    monkeypatch.setattr("analysis.surfaces.model_fit_service.fit_valid_model_result", fake_fit)
+    monkeypatch.setattr("analysis.surfaces.model_fit_service.predict_model_iv", fake_predict)
     get_surface_grids_cached.cache_clear()
 
-    with patch("analysis.peer_composite_builder.get_conn", return_value=test_db):
+    with patch("analysis.surfaces.peer_composite_builder.get_conn", return_value=test_db):
         _grids, X, names = surface_feature_matrix(
             ["SPY"],
             "2024-01-15",
@@ -285,7 +285,7 @@ def test_surface_feature_matrix_fit_mode_counts_full_grid(test_db, monkeypatch):
 
 def test_tenor_bins_configuration(test_db):
     """Test that different tenor bin configurations affect results."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=test_db):
         # Default tenors
         cfg_default = PipelineConfig()
         surf_default = build_surface_grids(tickers=["SPY"], **{
@@ -323,7 +323,7 @@ def test_tenor_bins_configuration(test_db):
 
 def test_moneyness_bins_configuration(test_db):
     """Test that different moneyness bin configurations affect results."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=test_db):
         # Default moneyness bins
         cfg_default = PipelineConfig()
         surf_default = build_surface_grids(tickers=["SPY"], **{
@@ -361,7 +361,7 @@ def test_moneyness_bins_configuration(test_db):
 
 def test_max_expiries_limits_data(test_db):
     """Test that max_expiries parameter limits the number of expiration dates."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=test_db):
         # No limit on expiries
         cfg_unlimited = PipelineConfig(max_expiries=None)
         surf_unlimited = build_surface_grids(tickers=["SPY"], **{
@@ -399,7 +399,7 @@ def test_max_expiries_limits_data(test_db):
 def test_build_surfaces_with_config(test_db):
     """Test the higher-level build_surfaces function with PipelineConfig."""
     with patch('analysis.analysis_pipeline._get_ro_conn', return_value=test_db):
-        with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
+        with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=test_db):
             # Test with baseline config
             cfg_baseline = PipelineConfig(use_atm_only=False)
             surfaces_baseline = build_surfaces(tickers=["SPY"], cfg=cfg_baseline)
@@ -433,7 +433,7 @@ def test_build_surfaces_with_config(test_db):
 
 def test_configuration_isolation(test_db):
     """Test that different configurations produce isolated, predictable results."""
-    with patch('analysis.peer_composite_builder.get_conn', return_value=test_db):
+    with patch('analysis.surfaces.peer_composite_builder.get_conn', return_value=test_db):
         # Configuration 1: Very restrictive
         cfg_restrictive = PipelineConfig(
             tenors=(30, 90),

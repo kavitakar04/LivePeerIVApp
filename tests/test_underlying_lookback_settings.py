@@ -42,3 +42,29 @@ def test_underlying_coverage_uses_requested_lookback_without_500_day_cap(monkeyp
 
     assert updated == 123
     assert calls == [({"AAA"}, "5y")]
+
+
+def test_underlying_coverage_uses_parameterized_ticker_query(monkeypatch):
+    conn = _conn_with_underlying_rows(row_count=0)
+    calls = []
+
+    monkeypatch.setattr(data_pipeline, "get_conn", lambda: conn)
+    monkeypatch.setattr(
+        data_pipeline,
+        "update_underlying_prices",
+        lambda tickers, period="1y": calls.append((set(tickers), period)) or 1,
+    )
+
+    updated = data_pipeline.check_and_update_underlying_prices({"AA'A"}, lookback_days=30)
+
+    assert updated == 1
+    assert calls == [({"AA'A"}, "1mo")]
+
+
+def test_ensure_underlying_price_data_reports_failure(monkeypatch):
+    def broken_check(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(data_pipeline, "check_and_update_underlying_prices", broken_check)
+
+    assert data_pipeline.ensure_underlying_price_data(["AAA"]) is False

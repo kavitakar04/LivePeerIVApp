@@ -1,4 +1,4 @@
-from display.gui.gui_input import (
+from display.gui.controls.gui_input import (
     feature_mode_id,
     feature_mode_label,
     gui_feature_mode_values,

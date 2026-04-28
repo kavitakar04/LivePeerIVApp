@@ -5,7 +5,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from display.plotting.rv_plots import plot_surface_residual_heatmap
+from display.plotting.charts.rv_plots import plot_surface_residual_heatmap
 
 
 def test_rv_heatmap_redraw_keeps_main_axes_position_stable():

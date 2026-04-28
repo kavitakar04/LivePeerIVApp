@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def test_weights_recomputed_on_weight_mode_change(monkeypatch):
@@ -23,7 +23,7 @@ def test_weights_recomputed_on_weight_mode_change(monkeypatch):
         return pd.Series({peers[0]: 1.0})
 
     monkeypatch.setattr(
-        "analysis.unified_weights.compute_unified_weights", fake_compute_unified_weights
+        "analysis.weights.unified_weights.compute_unified_weights", fake_compute_unified_weights
     )
 
     pm._weights_from_ui_or_matrix("TARGET", ["PEER"], "corr_iv_atm")

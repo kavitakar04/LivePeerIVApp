@@ -1,7 +1,7 @@
 import pandas as pd
 
-from analysis.feature_health import summarize_feature_health
-from display.gui.parameters_tab import (
+from analysis.views.feature_health import summarize_feature_health
+from display.gui.panels.parameters_tab import (
     build_model_health_grid,
     flatten_diagnostics_info,
     flatten_fit_info,

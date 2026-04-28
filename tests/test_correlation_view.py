@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from analysis.correlation_view import (
+from analysis.views.correlation_view import (
     corr_by_expiry_rank,
     coverage_by_ticker,
     finite_cell_summary,

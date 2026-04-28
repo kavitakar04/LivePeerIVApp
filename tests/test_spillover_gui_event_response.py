@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from display.gui.spillover_gui import (
+from display.gui.panels.spillover_gui import (
     compute_rolling_spillover_signal,
     compute_trigger_event_response,
     prepare_spillover_summary_display,

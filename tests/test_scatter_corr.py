@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from display.plotting.correlation_detail_plot import scatter_corr_matrix
+from display.plotting.charts.correlation_detail_plot import scatter_corr_matrix
 
 
 def test_scatter_corr_subset_columns():

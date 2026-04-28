@@ -3,7 +3,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from display.plotting.legend_utils import add_legend_toggles
+from display.plotting.utils.legend_utils import add_legend_toggles
 
 
 def test_legend_toggle_single_connection():

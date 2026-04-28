@@ -7,8 +7,8 @@ GUI selection starts in `display/gui/gui_input.py`:
 - `cmb_weight_method`: `corr`, `pca`, `cosine`, `equal`, `oi`
 - `cmb_feature_mode`: `iv_atm`, `ul`, `surface`, `surface_grid`
 - settings are read by `display/gui/gui_plot_manager.py`
-- plot manager calls `analysis.weight_view.resolve_peer_weights`
-- resolver calls `analysis.unified_weights.compute_unified_weights`
+- plot manager calls `analysis.weights.weight_view.resolve_peer_weights`
+- resolver calls `analysis.weights.unified_weights.compute_unified_weights`
 - `UnifiedWeightComputer.compute_weights` builds features and dispatches by `WeightMethod`
 - downstream users include peer-composite surfaces, smiles, term overlays, relative value views, and weight bars
 

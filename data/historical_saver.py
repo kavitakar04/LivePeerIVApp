@@ -6,7 +6,7 @@ from .db_utils import get_conn, ensure_initialized, insert_quotes
 from .data_downloader import download_raw_option_data, get_available_expiries
 from .data_pipeline import enrich_quotes
 from .interest_rates import STANDARD_RISK_FREE_RATE, STANDARD_DIVIDEND_YIELD
-from analysis.settings import DEFAULT_UNDERLYING_LOOKBACK_DAYS
+from analysis.config.settings import DEFAULT_UNDERLYING_LOOKBACK_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def save_for_tickers(
         stored_expiries: list[str] = []
         inserted = 0
         if raw is None or raw.empty:
-            print(f"No raw rows for {t}")
+            logger.warning("no raw rows ticker=%s", t)
         else:
             enriched = enrich_quotes(
                 raw,
@@ -81,7 +81,7 @@ def save_for_tickers(
             if enriched is None or enriched.empty:
                 enriched = None
             if enriched is None:
-                print(f"No enriched rows for {t}")
+                logger.warning("no enriched rows ticker=%s", t)
             else:
                 if enriched.columns.duplicated().any():
                     enriched = enriched.loc[:, ~enriched.columns.duplicated()].copy()
@@ -90,7 +90,7 @@ def save_for_tickers(
                 )
                 inserted = insert_quotes(conn, enriched.to_dict(orient="records"))
                 total += inserted
-                print(f"Inserted {t}: {len(enriched)} rows")
+                logger.info("inserted enriched rows ticker=%s rows=%s", t, len(enriched))
 
         missing_shared = sorted(set(requested_expiries) - set(stored_expiries))
         report_row = {
@@ -118,19 +118,15 @@ def save_for_tickers(
     LAST_COVERAGE_REPORT.clear()
     LAST_COVERAGE_REPORT.extend(coverage_report)
     if coverage_report:
-        print("Coverage report:")
-        print(
-            "ticker | provider_expiries | requested_expiries | "
-            "fetched_expiries | stored_expiries | missing_shared_expiries"
-        )
         for row in coverage_report:
-            print(
-                f"{row['ticker']} | "
-                f"{len(row['provider_expiries'])} | "
-                f"{','.join(row['requested_expiries']) or '-'} | "
-                f"{','.join(row['fetched_expiries']) or '-'} | "
-                f"{','.join(row['stored_expiries']) or '-'} | "
-                f"{','.join(row['missing_shared_expiries']) or '-'}"
+            logger.info(
+                "coverage report ticker=%s provider_expiry_count=%s requested=%s fetched=%s stored=%s missing_shared=%s",
+                row["ticker"],
+                len(row["provider_expiries"]),
+                row["requested_expiries"],
+                row["fetched_expiries"],
+                row["stored_expiries"],
+                row["missing_shared_expiries"],
             )
 
     return total

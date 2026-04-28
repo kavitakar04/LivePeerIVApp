@@ -1,4 +1,4 @@
-from display.gui.spillover_gui import (
+from display.gui.panels.spillover_gui import (
     EVENT_PLOT_NOTE,
     EVENT_RESPONSE_Y_LABEL,
     EVENT_RESPONSE_TITLE_SUFFIX,

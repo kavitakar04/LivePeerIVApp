@@ -1,6 +1,6 @@
 """Regression guard that animation playback APIs stay removed."""
 
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def test_animation_methods_removed():

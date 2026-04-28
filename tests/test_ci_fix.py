@@ -10,13 +10,13 @@ sys.path.insert(0, os.path.abspath('.'))
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from analysis.smile_data_service import get_smile_slice
-from analysis.data_availability_service import available_dates
-from analysis.atm_extraction import compute_atm_by_expiry
-from display.plotting.smile_plot import fit_and_plot_smile
-from display.plotting.term_plot import plot_atm_term_structure
+from analysis.services.smile_data_service import get_smile_slice
+from analysis.services.data_availability_service import available_dates
+from analysis.surfaces.atm_extraction import compute_atm_by_expiry
+from display.plotting.charts.smile_plot import fit_and_plot_smile
+from display.plotting.charts.term_plot import plot_atm_term_structure
 from volModel.sviFit import fit_svi_slice
-from analysis.confidence_bands import svi_confidence_bands
+from analysis.surfaces.confidence_bands import svi_confidence_bands
 
 def test_confidence_intervals():
     """Test that confidence intervals are enabled by default."""

@@ -1,5 +1,8 @@
-"""
-Analysis module for CleanIV_Correlation project.
+"""Research analytics package.
 
-This module contains analysis pipelines, surface builders, and correlation analysis.
+Implementation modules are grouped into domain subpackages:
+``config``, ``persistence``, ``surfaces``, ``services``, ``weights``,
+``views``, ``rv``, ``jobs``, and ``spillover``.
+
+New code should import from these canonical subpackages directly.
 """

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from unittest.mock import patch
 
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def test_term_plot_populates_last_fit_info():
@@ -19,7 +19,7 @@ def test_term_plot_populates_last_fit_info():
             'expiry': ['2024-06-01', '2024-12-01'],
         })
         data = {'atm_curve': atm_curve}
-        with patch('display.gui.gui_plot_manager.compute_or_load', return_value=data):
+        with patch('display.gui.controllers.gui_plot_manager.compute_or_load', return_value=data):
             settings = {
                 'plot_type': 'Term ATM',
                 'target': 'XYZ',

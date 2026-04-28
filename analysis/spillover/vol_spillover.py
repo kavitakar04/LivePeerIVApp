@@ -3,7 +3,7 @@ import numpy as np
 import sqlite3
 from typing import List, Dict, Iterable, Callable, Tuple, Optional
 from data.ticker_groups import get_groups_for_target, load_ticker_group
-from analysis.settings import (
+from analysis.config.settings import (
     DEFAULT_SPILLOVER_EVENT_THRESHOLD,
     DEFAULT_SPILLOVER_HORIZONS,
     DEFAULT_SPILLOVER_LOOKBACK_DAYS,

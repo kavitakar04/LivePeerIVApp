@@ -4,8 +4,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from display.gui.gui_plot_manager import PlotManager
-from display.plotting.term_plot import plot_atm_term_structure, plot_term_structure_comparison
+from display.gui.controllers.gui_plot_manager import PlotManager
+from display.plotting.charts.term_plot import plot_atm_term_structure, plot_term_structure_comparison
 
 
 def test_plot_atm_term_structure_handles_string_vols():
@@ -115,8 +115,8 @@ def test_term_plot_draws_quote_dispersion_as_error_bars():
 
 
 def test_term_data_preserves_quote_dispersion_for_single_atm(monkeypatch):
-    from analysis import term_data_service
-    from analysis.term_data_service import prepare_term_data
+    import analysis.services.term_data_service as term_data_service
+    from analysis.services.term_data_service import prepare_term_data
 
     def make_slice(_ticker: str) -> pd.DataFrame:
         spot = 100.0
@@ -189,8 +189,8 @@ def test_plot_manager_term_shows_peer_legend_when_overlay_enabled():
 
 
 def test_prepare_term_data_uses_same_atm_path_and_aligned_composite(monkeypatch):
-    from analysis import term_data_service
-    from analysis.term_data_service import prepare_term_data
+    import analysis.services.term_data_service as term_data_service
+    from analysis.services.term_data_service import prepare_term_data
 
     def make_slice(ticker: str) -> pd.DataFrame:
         spot = 100.0
@@ -238,8 +238,8 @@ def test_prepare_term_data_uses_same_atm_path_and_aligned_composite(monkeypatch)
 
 
 def test_prepare_term_data_does_not_expand_target_beyond_common_grid(monkeypatch):
-    from analysis import term_data_service
-    from analysis.term_data_service import prepare_term_data
+    import analysis.services.term_data_service as term_data_service
+    from analysis.services.term_data_service import prepare_term_data
 
     def make_curve(ticker: str) -> pd.DataFrame:
         days_by_ticker = {

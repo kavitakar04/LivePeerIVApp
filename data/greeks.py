@@ -250,11 +250,9 @@ def compute_all_greeks_df(
         if use_ticker_rates and has_ticker:
             ticker = str(rw.get("ticker", ""))
             if ticker and ticker != "nan":
-                # Convert percentage to decimal (ML rates are in percentage form)
                 ticker_rate = get_ticker_interest_rate(ticker, rate_date)
                 if ticker_rate is not None:
-                    # ML rates are in percentage form, convert to decimal
-                    effective_r = ticker_rate / 100.0
+                    effective_r = ticker_rate
                 else:
                     effective_r = r if r is not None else STANDARD_RISK_FREE_RATE
             else:

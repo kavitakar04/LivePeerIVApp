@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from display.gui.gui_plot_manager import PlotManager
+from display.gui.controllers.gui_plot_manager import PlotManager
 
 
 def _manager_with_smile_context(ax):
@@ -102,7 +102,7 @@ def test_smile_render_skips_malformed_peer_composite_overlay(monkeypatch):
             "skipped": {"P1": "svi fit rejected"},
         }
 
-    monkeypatch.setattr("display.gui.gui_plot_manager.build_peer_smile_composite", malformed_composite)
+    monkeypatch.setattr("display.gui.controllers.gui_plot_manager.build_peer_smile_composite", malformed_composite)
 
     mgr._render_smile_at_index()
 

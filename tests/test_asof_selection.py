@@ -2,7 +2,7 @@ import sqlite3
 from unittest.mock import patch
 
 from data.db_utils import ensure_initialized, insert_quotes
-from analysis.unified_weights import (
+from analysis.weights.unified_weights import (
     _weight_computer,
     WeightConfig,
     FeatureSet,

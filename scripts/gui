@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ -x "$ROOT/venv/bin/python" ]; then
+    PYTHON="$ROOT/venv/bin/python"
+else
+    PYTHON="${PYTHON:-python3}"
+fi
+
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/mplconfig}"
+mkdir -p "$MPLCONFIGDIR"
+
+exec "$PYTHON" -m display.gui.app.browser "$@"

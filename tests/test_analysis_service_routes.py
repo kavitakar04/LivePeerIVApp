@@ -1,14 +1,14 @@
 def test_pipeline_weight_facade_points_to_weight_service():
     import analysis.analysis_pipeline as pipeline
-    import analysis.weight_service as weight_service
+    import analysis.weights.weight_service as weight_service
 
     assert pipeline.compute_peer_weights is weight_service.compute_peer_weights
 
 
-def test_focused_pillar_facades_preserve_public_helpers():
-    import analysis.atm_extraction as atm_extraction
-    import analysis.pillar_selection as pillar_selection
-    import analysis.pillars as pillars
+def test_canonical_pillar_modules_preserve_public_helpers():
+    import analysis.surfaces.atm_extraction as atm_extraction
+    import analysis.surfaces.pillar_selection as pillar_selection
+    import analysis.surfaces.pillars as pillars
 
     assert atm_extraction.fit_smile_get_atm is pillars._fit_smile_get_atm
     assert atm_extraction.compute_atm_by_expiry is pillars.compute_atm_by_expiry
@@ -18,8 +18,8 @@ def test_focused_pillar_facades_preserve_public_helpers():
 
 def test_model_fit_service_is_gui_and_pipeline_boundary():
     import analysis.analysis_pipeline as pipeline
-    import analysis.model_fit_service as model_fit_service
-    import display.gui.gui_plot_manager as gui_plot_manager
+    import analysis.surfaces.model_fit_service as model_fit_service
+    import display.gui.controllers.gui_plot_manager as gui_plot_manager
 
     assert pipeline.quality_checked_result is model_fit_service.quality_checked_result
     assert pipeline.fit_model_params is model_fit_service.fit_model_params
@@ -30,7 +30,7 @@ def test_model_fit_service_is_gui_and_pipeline_boundary():
 def test_model_fit_contract_preserves_legacy_tuple(monkeypatch):
     import numpy as np
 
-    import analysis.model_fit_service as model_fit_service
+    import analysis.surfaces.model_fit_service as model_fit_service
 
     class Quality:
         ok = True
@@ -73,13 +73,13 @@ def test_model_fit_contract_preserves_legacy_tuple(monkeypatch):
 
 def test_data_service_facades_preserve_pipeline_routes():
     import analysis.analysis_pipeline as pipeline
-    import analysis.data_availability_service as data_availability_service
-    import analysis.rv_heatmap_service as rv_heatmap_service
-    import analysis.smile_data_service as smile_data_service
-    import analysis.term_data_service as term_data_service
-    import display.gui.browser as browser
-    import display.gui.gui_plot_manager as gui_plot_manager
-    import display.gui.spillover_gui as spillover_gui
+    import analysis.services.data_availability_service as data_availability_service
+    import analysis.services.rv_heatmap_service as rv_heatmap_service
+    import analysis.services.smile_data_service as smile_data_service
+    import analysis.services.term_data_service as term_data_service
+    import display.gui.app.browser as browser
+    import display.gui.controllers.gui_plot_manager as gui_plot_manager
+    import display.gui.panels.spillover_gui as spillover_gui
 
     assert smile_data_service.get_smile_slice is pipeline.get_smile_slice
     assert smile_data_service.get_smile_slices_batch is pipeline.get_smile_slices_batch
@@ -106,6 +106,7 @@ def test_data_service_facades_preserve_pipeline_routes():
 
 def test_ingest_facade_accepts_underlying_lookback(monkeypatch):
     import analysis.analysis_pipeline as pipeline
+    import analysis.services.data_availability_service as data_availability_service
 
     seen = {}
 
@@ -114,9 +115,10 @@ def test_ingest_facade_accepts_underlying_lookback(monkeypatch):
         seen["underlying_lookback_days"] = underlying_lookback_days
         return 7
 
-    monkeypatch.setattr(pipeline, "save_for_tickers", fake_save_for_tickers)
+    monkeypatch.setattr(data_availability_service, "save_for_tickers", fake_save_for_tickers)
 
     inserted = pipeline.ingest_and_process(["aaa"], underlying_lookback_days=800)
 
     assert inserted == 7
     assert seen == {"tickers": ["AAA"], "underlying_lookback_days": 800}
+

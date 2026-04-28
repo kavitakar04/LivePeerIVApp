@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test script to verify the surface feature matrix graceful failure."""
 
-from analysis.beta_builder import surface_feature_matrix
+from analysis.weights.beta_builder import surface_feature_matrix
 
 def test_surface_feature_graceful_failure():
     """Test that surface_feature_matrix returns empty results instead of raising."""

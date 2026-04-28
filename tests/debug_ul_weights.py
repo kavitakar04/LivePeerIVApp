@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test script to debug underlying price features."""
 
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
+from analysis.weights.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
 
 def debug_underlying_features():
     """Debug why underlying price features are empty."""

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test the surface feature matrix with a realistic scenario."""
 
-from analysis.beta_builder import surface_feature_matrix
+from analysis.weights.beta_builder import surface_feature_matrix
 import pandas as pd
 
 def test_with_real_dates():

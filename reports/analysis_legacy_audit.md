@@ -107,14 +107,14 @@ These are the only currently credible removal/archive candidates:
 ### Phase 2: Finish Facade Migration
 
 - Move active GUI and analysis imports toward:
-  - `analysis.smile_data_service`
-  - `analysis.term_data_service`
-  - `analysis.rv_heatmap_service`
-  - `analysis.data_availability_service`
-  - `analysis.weight_service`
-  - `analysis.model_fit_service`
-  - `analysis.atm_extraction`
-  - `analysis.pillar_selection`
+  - `analysis.services.smile_data_service`
+  - `analysis.services.term_data_service`
+  - `analysis.services.rv_heatmap_service`
+  - `analysis.services.data_availability_service`
+  - `analysis.weights.weight_service`
+  - `analysis.surfaces.model_fit_service`
+  - `analysis.surfaces.atm_extraction`
+  - `analysis.surfaces.pillar_selection`
 - Keep old paths temporarily with route tests.
 
 ### Phase 3: Shrink Legacy Core Modules

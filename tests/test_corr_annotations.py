@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from display.plotting.correlation_detail_plot import plot_correlation_details
+from display.plotting.charts.correlation_detail_plot import plot_correlation_details
 
 
 def test_coverage_summary_outside_axes():

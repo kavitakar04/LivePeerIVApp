@@ -2,7 +2,7 @@
 """Test ul weight mode specifically."""
 
 import pytest
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig
+from analysis.weights.unified_weights import UnifiedWeightComputer, WeightConfig
 
 
 def test_ul_weight_mode():

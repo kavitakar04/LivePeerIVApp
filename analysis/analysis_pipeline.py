@@ -34,7 +34,7 @@ from data.quote_quality import (
     ANALYTICS_MIN_MONEYNESS,
 )
 
-from .peer_composite_builder import (
+from analysis.surfaces.peer_composite_builder import (
     build_surface_grids,
     DEFAULT_TENORS,
     DEFAULT_MNY_BINS,
@@ -42,11 +42,11 @@ from .peer_composite_builder import (
     build_synthetic_iv as build_synthetic_iv_pillars,
 )
 
-from .weight_service import compute_peer_weights
-from .beta_builder import build_vol_betas, save_correlations
-from .pillar_selection import nearest_pillars
-from .pillar_selection import load_atm, DEFAULT_PILLARS_DAYS
-from .settings import (
+from analysis.weights.weight_service import compute_peer_weights
+from analysis.weights.beta_builder import build_vol_betas, save_correlations
+from analysis.surfaces.pillar_selection import nearest_pillars
+from analysis.surfaces.pillar_selection import load_atm, DEFAULT_PILLARS_DAYS
+from analysis.config.settings import (
     DEFAULT_MAX_EXPIRIES,
     DEFAULT_PILLAR_DAYS,
     DEFAULT_PILLAR_TOLERANCE_DAYS,
@@ -567,16 +567,24 @@ def get_most_recent_date_global() -> Optional[str]:
 # Smile helpers, term data, and RV heatmap
 # Implementations live in service modules; re-exported here for backward compat.
 # -----------------------------------------------------------------------------
-from .smile_data_service import (  # noqa: E402, F401
+from analysis.services.smile_data_service import (  # noqa: E402, F401
     get_smile_slice,
     get_smile_slices_batch,
     prepare_smile_data,
     fit_smile_for,
     sample_smile_curve,
 )
-from .term_data_service import prepare_term_data  # noqa: E402, F401
-from .rv_heatmap_service import prepare_rv_heatmap_data  # noqa: E402, F401
-from .model_fit_service import fit_model_params, quality_checked_result  # noqa: E402, F401
+from analysis.services.term_data_service import prepare_term_data  # noqa: E402, F401
+from analysis.services.rv_heatmap_service import prepare_rv_heatmap_data  # noqa: E402, F401
+from analysis.surfaces.model_fit_service import fit_model_params, quality_checked_result  # noqa: E402, F401
+from analysis.services.data_availability_service import (  # noqa: E402, F401
+    available_dates,
+    available_tickers,
+    get_daily_hv_for_spillover,
+    get_daily_iv_for_spillover,
+    get_most_recent_date_global,
+    ingest_and_process,
+)
 
 
 # Enhanced cache management

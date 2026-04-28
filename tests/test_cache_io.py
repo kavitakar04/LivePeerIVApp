@@ -1,6 +1,6 @@
 import sqlite3
-from analysis import cache_io
-from analysis.cache_io import save_calc_cache, load_calc_cache, compute_or_load
+import analysis.persistence.cache_io as cache_io
+from analysis.persistence.cache_io import save_calc_cache, load_calc_cache, compute_or_load
 
 
 def _setup_db():

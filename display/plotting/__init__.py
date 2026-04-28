@@ -1,1 +1,4 @@
-"""Plotting utilities for the project."""
+"""Plotting package.
+
+Chart implementations live under ``charts`` and shared helpers under ``utils``.
+"""

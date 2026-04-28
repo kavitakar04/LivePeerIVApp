@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath('.'))
 import pandas as pd
 import numpy as np
 from analysis.analysis_pipeline import get_smile_slice, available_dates
-from analysis.correlation_utils import compute_atm_corr_pillar_free
+from analysis.weights.correlation_utils import compute_atm_corr_pillar_free
 # One-time manual fix (e.g. run in a script or Python shell)
 import sqlite3
 conn = sqlite3.connect("data/calculations.db")

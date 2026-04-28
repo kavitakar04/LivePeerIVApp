@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Debug the surface feature matrix issue."""
 
-from analysis.peer_composite_builder import build_surface_grids
+from analysis.surfaces.peer_composite_builder import build_surface_grids
 
 def debug_surface_grids():
     """Debug what build_surface_grids returns."""

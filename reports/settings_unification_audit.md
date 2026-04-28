@@ -41,21 +41,21 @@ The module exposes:
 | Spillover threshold | `0.10` | Event trigger threshold | Yes, spillover tab |
 | Spillover horizons | `1,3,5`; background `0,1,3,5,10` | Response horizons | Yes, spillover tab |
 | Spillover regression window | `90` | Historical window for regression weights | Yes, spillover tab |
-| Cache TTL | `900` seconds | TTL for `analysis.cache_io` artifacts | Advanced |
+| Cache TTL | `900` seconds | TTL for `analysis.persistence.cache_io` artifacts | Advanced |
 | Weight power | `1.0` | Weight sharpening exponent | Yes |
 | Clip negative weights | `True` | Non-negative portfolio weights | Yes |
 
 ## What was unified now
 
 - Added `analysis/settings.py` and `AnalysisDefaults`.
-- Routed GUI input defaults through `analysis.settings`.
-- Routed GUI plot-manager fallbacks through `analysis.settings`.
-- Routed synthetic ETF defaults through `analysis.settings`.
-- Routed unified-weight defaults through `analysis.settings`.
-- Routed correlation-view defaults through `analysis.settings`.
-- Routed spillover defaults through `analysis.settings`.
-- Routed analysis background spillover defaults through `analysis.settings`.
-- Routed cache TTL through `analysis.settings`.
+- Routed GUI input defaults through `analysis.config.settings`.
+- Routed GUI plot-manager fallbacks through `analysis.config.settings`.
+- Routed synthetic ETF defaults through `analysis.config.settings`.
+- Routed unified-weight defaults through `analysis.config.settings`.
+- Routed correlation-view defaults through `analysis.config.settings`.
+- Routed spillover defaults through `analysis.config.settings`.
+- Routed analysis background spillover defaults through `analysis.config.settings`.
+- Routed cache TTL through `analysis.config.settings`.
 - Replaced remaining obvious pillar/tenor/moneyness literals in beta/correlation helpers.
 - Expanded the default ATM-adjacent moneyness bin to remove silent gaps in
   `0.90-0.95` and `1.05-1.10`.

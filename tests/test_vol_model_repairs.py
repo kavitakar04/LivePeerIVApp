@@ -41,7 +41,7 @@ def test_volmodel_tps_explicit_dispatch():
 
 
 def test_pillar_svi_does_not_silently_fallback():
-    from analysis.atm_extraction import fit_smile_get_atm
+    from analysis.surfaces.atm_extraction import fit_smile_get_atm
 
     S, T, K, iv = _synthetic_smile()
     g = pd.DataFrame(
@@ -64,8 +64,8 @@ def test_pillar_svi_does_not_silently_fallback():
 
 
 def test_auto_rejects_broken_sabr_and_uses_valid_fallback(monkeypatch):
-    import analysis.atm_extraction as atm_extraction
-    import analysis.pillars as pillars
+    import analysis.surfaces.atm_extraction as atm_extraction
+    import analysis.surfaces.pillars as pillars
 
     S, T, K, iv = _synthetic_smile()
     g = pd.DataFrame(

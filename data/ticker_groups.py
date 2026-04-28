@@ -5,10 +5,13 @@ Allows users to save commonly used target + peers combinations for quick access.
 
 from __future__ import annotations
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from .db_utils import get_conn, check_db_health
+
+logger = logging.getLogger(__name__)
 
 
 def save_ticker_group(
@@ -59,8 +62,8 @@ def save_ticker_group(
         check_db_health(conn)
         return True
 
-    except Exception as e:
-        print(f"Error saving ticker group '{group_name}': {e}")
+    except Exception:
+        logger.exception("error saving ticker group group_name=%s", group_name)
         return False
     finally:
         if should_close:
@@ -107,8 +110,8 @@ def load_ticker_group(group_name: str, conn: Optional[sqlite3.Connection] = None
             "updated_at": row[5],
         }
 
-    except Exception as e:
-        print(f"Error loading ticker group '{group_name}': {e}")
+    except Exception:
+        logger.exception("error loading ticker group group_name=%s", group_name)
         return None
     finally:
         if should_close:
@@ -152,8 +155,8 @@ def list_ticker_groups(conn: Optional[sqlite3.Connection] = None) -> List[Dict]:
             )
         return groups
 
-    except Exception as e:
-        print(f"Error listing ticker groups: {e}")
+    except Exception:
+        logger.exception("error listing ticker groups")
         return []
     finally:
         if should_close:
@@ -182,8 +185,8 @@ def delete_ticker_group(group_name: str, conn: Optional[sqlite3.Connection] = No
             cursor = conn.execute("DELETE FROM ticker_groups WHERE group_name = ?", (group_name,))
             return cursor.rowcount > 0
 
-    except Exception as e:
-        print(f"Error deleting ticker group '{group_name}': {e}")
+    except Exception:
+        logger.exception("error deleting ticker group group_name=%s", group_name)
         return False
     finally:
         if should_close:
@@ -219,8 +222,8 @@ def get_groups_for_target(target_ticker: str, conn: Optional[sqlite3.Connection]
 
         return [row[0] for row in cursor.fetchall()]
 
-    except Exception as e:
-        print(f"Error getting groups for target '{target_ticker}': {e}")
+    except Exception:
+        logger.exception("error getting groups for target target=%s", target_ticker)
         return []
     finally:
         if should_close:

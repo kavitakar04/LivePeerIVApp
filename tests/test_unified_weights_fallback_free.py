@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from analysis.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
+from analysis.weights.unified_weights import UnifiedWeightComputer, WeightConfig, WeightMethod, FeatureSet
 
 
 def test_missing_target_data_raises(monkeypatch):

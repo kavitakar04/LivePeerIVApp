@@ -1,5 +1,5 @@
-from display.gui.browser import BROWSER_TAB_LABELS
-from display.gui.gui_input import PLOT_TYPES
+from display.gui.app.browser import BROWSER_TAB_LABELS
+from display.gui.controls.gui_input import PLOT_TYPES
 
 
 def test_browser_combines_settings_and_health_tab():

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from analysis.term_view import compute_term_fit_curve, compute_term_spread_curve, term_ci_error
+from analysis.views.term_view import compute_term_fit_curve, compute_term_spread_curve, term_ci_error
 
 
 def test_term_view_fit_and_spread_helpers():

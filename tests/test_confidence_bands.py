@@ -1,6 +1,6 @@
 import numpy as np
 
-from analysis.confidence_bands import bootstrap_bands, normalize_confidence_level, residual_bootstrap_bands
+from analysis.surfaces.confidence_bands import bootstrap_bands, normalize_confidence_level, residual_bootstrap_bands
 
 
 def test_normalize_confidence_level_accepts_percent_or_decimal():

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from analysis.market_graph import (
+from analysis.views.market_graph import (
     build_market_graph,
     explain_rv_signal_with_graph,
     graph_confidence_features,
